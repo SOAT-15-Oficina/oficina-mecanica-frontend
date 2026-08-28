@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oficina - Insumos</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="w-56 bg-gray-900 text-white flex-shrink-0 flex flex-col"></aside>
+    <div class="flex-1 flex flex-col">
+      <header id="header" class="bg-white shadow px-6 py-3 flex justify-between items-center"></header>
+      <main class="flex-1 p-6">
+
+        <div id="purchase-alerts" class="hidden mb-6"></div>
+
+        <div class="flex items-center justify-between mb-6">
+          <div></div>
+          <button onclick="openCreateModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium">Novo insumo</button>
+        </div>
+
+        <div class="bg-white rounded-xl shadow overflow-x-auto">
+          <table class="w-full min-w-[760px] text-sm">
+            <thead class="bg-gray-50 text-left text-gray-600">
+              <tr>
+                <th class="px-4 py-3 font-medium">Título</th>
+                <th class="px-4 py-3 font-medium">Tipo</th>
+                <th class="px-4 py-3 font-medium text-right">Preço</th>
+                <th class="px-4 py-3 font-medium text-right">Estoque</th>
+                <th class="px-4 py-3 font-medium text-right">Estoque mín.</th>
+                <th class="px-4 py-3 font-medium text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="table-body" class="divide-y divide-gray-100"></tbody>
+          </table>
+          <div id="empty" class="hidden text-center py-8 text-gray-400 text-sm">Nenhum insumo encontrado</div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <script type="module" src="/shared/app.js"></script>
+  <script>
+  window.addEventListener("DOMContentLoaded", () => {
+      initLayout();
+      setPageTitle('Insumos');
+
+      async function loadSupplies() {
+        try {
+          const resp = await api.get('/supplies');
+          const data = await api.json(resp);
+          const list = data.data || [];
+          const tbody = document.getElementById('table-body');
+          const empty = document.getElementById('empty');
+          if (list.length === 0) { tbody.innerHTML = ''; empty.classList.remove('hidden'); return; }
+          empty.classList.add('hidden');
+          tbody.innerHTML = list.map(s => {
+            const low = s.stock_quantity <= s.minimum_stock;
+            return `
+              <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3 align-middle font-medium">${s.title}</td>
+                <td class="px-4 py-3 align-middle">${s.type}</td>
+                <td class="px-4 py-3 align-middle text-right">${formatCents(s.price_cents)}</td>
+                <td class="px-4 py-3 align-middle text-right ${low ? 'text-red-600 font-semibold' : ''}">${s.stock_quantity}</td>
+                <td class="px-4 py-3 align-middle text-right text-gray-500">${s.minimum_stock}</td>
+                <td class="px-4 py-3 align-middle text-right">
+                  <div class="flex justify-end gap-2">
+                    <button onclick='openEditModal(${JSON.stringify(s)})' class="bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded-lg text-xs font-medium">Editar</button>
+                    <button onclick="deleteSupply('${s.id}')" class="bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-lg text-xs font-medium">Excluir</button>
+                  </div>
+                </td>
+              </tr>`;
+          }).join('');
+        } catch (e) { showError(e.message); }
+      }
+
+      function openCreateModal() {
+        openModal('Novo insumo', `
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Título</label>
+              <input id="m-title" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+              <select id="m-type" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <option value="PECA">Peça</option>
+                <option value="INSUMO">Insumo</option>
+              </select>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Preço (centavos)</label>
+                <input id="m-price" type="number" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Estoque</label>
+                <input id="m-stock" type="number" value="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Estoque mín.</label>
+                <input id="m-min" type="number" value="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+            </div>
+            <button onclick="createSupply()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm">Cadastrar</button>
+          </div>`);
+      }
+
+      async function createSupply() {
+        try {
+          const resp = await api.post('/supplies', {
+            title: document.getElementById('m-title').value,
+            type: document.getElementById('m-type').value,
+            price_cents: parseInt(document.getElementById('m-price').value),
+            stock_quantity: parseInt(document.getElementById('m-stock').value),
+            minimum_stock: parseInt(document.getElementById('m-min').value),
+          });
+          await api.json(resp);
+          closeModal(); showToast('Insumo cadastrado'); loadSupplies();
+        } catch (e) { showError(e.message); }
+      }
+
+      function openEditModal(s) {
+        openModal('Editar Insumo', `
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Título</label>
+              <input id="m-e-title" type="text" value="${s.title}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+              <select id="m-e-type" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <option value="PECA" ${s.type === 'PECA' ? 'selected' : ''}>Peça</option>
+                <option value="INSUMO" ${s.type === 'INSUMO' ? 'selected' : ''}>Insumo</option>
+              </select>
+            </div>
+            <div class="grid grid-cols-3 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Preço (centavos)</label>
+                <input id="m-e-price" type="number" value="${s.price_cents}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Estoque</label>
+                <input id="m-e-stock" type="number" value="${s.stock_quantity}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Estoque mín.</label>
+                <input id="m-e-min" type="number" value="${s.minimum_stock}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+            </div>
+            <button onclick="updateSupply('${s.id}')" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm">Salvar</button>
+          </div>`);
+      }
+
+      async function updateSupply(id) {
+        try {
+          const resp = await api.put('/supplies/' + id, {
+            title: document.getElementById('m-e-title').value,
+            type: document.getElementById('m-e-type').value,
+            price_cents: parseInt(document.getElementById('m-e-price').value),
+            stock_quantity: parseInt(document.getElementById('m-e-stock').value),
+            minimum_stock: parseInt(document.getElementById('m-e-min').value),
+          });
+          await api.json(resp);
+          closeModal(); showToast('Insumo atualizado'); loadSupplies();
+        } catch (e) { showError(e.message); }
+      }
+
+      async function deleteSupply(id) {
+        if (!confirm('Tem certeza de que deseja excluir este insumo?')) return;
+        try {
+          const resp = await api.del('/supplies/' + id);
+          await api.ensureOk(resp);
+          showToast('Insumo excluído');
+          loadSupplies();
+          loadPurchaseAlerts();
+        } catch (e) { showError(e.message); }
+      }
+
+      async function loadPurchaseAlerts() {
+        try {
+          const resp = await api.get('/supplies/pending-purchases');
+          const data = await api.json(resp);
+          const alerts = data.data || [];
+          const el = document.getElementById('purchase-alerts');
+          if (alerts.length === 0) { el.classList.add('hidden'); return; }
+          el.classList.remove('hidden');
+          el.innerHTML = `
+            <div class="bg-red-50 border border-red-200 rounded-xl p-4">
+              <h3 class="text-red-800 font-semibold mb-2">Alerta de compra — Insumos em falta para serviços aprovados</h3>
+              <table class="w-full text-sm">
+                <thead class="text-left text-red-700">
+                  <tr>
+                    <th class="pb-1 font-medium">OS</th>
+                    <th class="pb-1 font-medium">Serviço</th>
+                    <th class="pb-1 font-medium">Insumo</th>
+                    <th class="pb-1 font-medium">Necessário</th>
+                    <th class="pb-1 font-medium">Em Estoque</th>
+                    <th class="pb-1 font-medium">Faltam</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${alerts.map(a => `
+                    <tr>
+                      <td class="py-1 font-mono text-xs">${a.WorkOrderCode}</td>
+                      <td class="py-1">${a.ServiceTitle}</td>
+                      <td class="py-1 font-medium">${a.SupplyTitle}</td>
+                      <td class="py-1 text-center">${a.Required}</td>
+                      <td class="py-1 text-center">${a.InStock}</td>
+                      <td class="py-1 text-center text-red-700 font-bold">${a.Required - a.InStock}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>`;
+        } catch { /* ignore */ }
+      }
+
+      loadPurchaseAlerts();
+      loadSupplies();
+
+    // Handlers inline (onclick=) resolvem no escopo global.
+    Object.assign(window, { createSupply, deleteSupply, loadPurchaseAlerts, loadSupplies, openCreateModal, openEditModal, updateSupply });
+  });
+  </script>
+</body>
+</html>

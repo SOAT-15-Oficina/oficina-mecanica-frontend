@@ -1,0 +1,158 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/adr/**"]
+  pull_request:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/adr/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  NODE_VERSION: "22"
+  SSM_PREFIX: /oficina-mecanica/prod
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint GitHub Actions workflows
+        run: docker run --rm -v "${GITHUB_WORKSPACE}:/repo" -w /repo rhysd/actionlint:latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test with coverage
+        run: npm run coverage
+
+      # O painel nao tem bundler: o que vai para o S3 e o proprio HTML/JS. Se
+      # um bloco inline nao for JavaScript valido, isso so apareceria no browser
+      # do avaliador -- entao valida aqui.
+      - name: Validate inline page scripts
+        run: node scripts/check-pages.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/lcov.info
+          retention-days: 1
+
+  # SonarQube self-hosted efemero, so em PR para main. Sem historico entre
+  # execucoes, o Quality Gate e avaliado sobre o codigo todo.
+  quality:
+    if: github.event_name == 'pull_request'
+    needs: [test]
+    runs-on: ubuntu-latest
+    services:
+      sonarqube:
+        image: sonarqube:lts-community
+        env:
+          SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+        ports: ["9000:9000"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+          path: coverage
+
+      - name: Wait for SonarQube
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:9000/api/system/status | grep -q '"status":"UP"'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "SonarQube nao subiu a tempo"
+          exit 1
+
+      - name: Provision scanner token
+        run: |
+          NEW_PASS="$(openssl rand -hex 20)"
+          curl -sf -u admin:admin -X POST \
+            "http://localhost:9000/api/users/change_password" \
+            -d "login=admin&previousPassword=admin&password=${NEW_PASS}" >/dev/null
+          TOKEN="$(curl -sf -u "admin:${NEW_PASS}" -X POST \
+            "http://localhost:9000/api/user_tokens/generate" \
+            -d "name=ci-${GITHUB_RUN_ID}" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')"
+          test -n "$TOKEN"
+          echo "::add-mask::$TOKEN"
+          echo "SONAR_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Scan and wait for Quality Gate
+        run: |
+          docker run --rm --network host \
+            -e SONAR_HOST_URL=http://localhost:9000 \
+            -e SONAR_TOKEN="$SONAR_TOKEN" \
+            -v "${GITHUB_WORKSPACE}:/usr/src" \
+            sonarsource/sonar-scanner-cli:latest \
+            -Dsonar.qualitygate.wait=true \
+            -Dsonar.qualitygate.timeout=300
+
+  deploy:
+    if: github.event_name == 'push'
+    needs: [test]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # S3 e CloudFront vivem na camada PERSISTENTE do Terraform: sobrevivem ao
+      # ciclo de bring-up/tear-down, entao estes valores nao mudam entre
+      # apresentacoes.
+      - name: Resolve infrastructure outputs
+        run: |
+          get() { aws ssm get-parameter --name "${SSM_PREFIX}/$1" --query Parameter.Value --output text; }
+          {
+            echo "FRONTEND_BUCKET=$(get frontend_bucket_name)"
+            echo "CLOUDFRONT_DISTRIBUTION_ID=$(get cloudfront_distribution_id)"
+          } >> "$GITHUB_ENV"
+
+      # HTML sem cache para que um deploy apareca imediatamente; assets estaticos
+      # com cache longo, invalidados pelo passo seguinte.
+      - name: Sync static assets
+        run: |
+          aws s3 sync shared/ "s3://${FRONTEND_BUCKET}/shared/" \
+            --delete --cache-control "public, max-age=86400"
+          aws s3 sync . "s3://${FRONTEND_BUCKET}/" \
+            --delete \
+            --exclude "*" --include "*.html" \
+            --cache-control "no-cache"
+
+      - name: Invalidate CloudFront
+        run: |
+          ID="$(aws cloudfront create-invalidation \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" \
+            --paths '/*' --query Invalidation.Id --output text)"
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "$CLOUDFRONT_DISTRIBUTION_ID" --id "$ID"
+
+      - name: Smoke check
+        run: |
+          DOMAIN="$(aws ssm get-parameter --name "${SSM_PREFIX}/public_domain" \
+            --query Parameter.Value --output text)"
+          curl -fsS "https://${DOMAIN}/index.html" | grep -q '<title>'
+          curl -fsS "https://${DOMAIN}/shared/app.js" | grep -q 'API_BASE'

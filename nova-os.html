@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oficina - Nova OS</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="w-56 bg-gray-900 text-white flex-shrink-0 flex flex-col"></aside>
+    <div class="flex-1 flex flex-col">
+      <header id="header" class="bg-white shadow px-6 py-3 flex justify-between items-center"></header>
+      <main class="flex-1 p-6">
+
+        <div class="max-w-xl">
+          <div class="bg-white rounded-xl shadow p-6 space-y-5">
+            <h2 class="text-lg font-semibold">Nova ordem de serviço</h2>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Título</label>
+              <input id="title" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="Ex: Revisão completa">
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Descrição (opcional)</label>
+              <textarea id="desc" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" rows="2"></textarea>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+              <select id="customer" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" onchange="loadVehiclesForCustomer()">
+                <option value="">Selecione o cliente...</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Veículo</label>
+              <select id="vehicle" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" disabled>
+                <option value="">Selecione o cliente primeiro...</option>
+              </select>
+            </div>
+
+            <button onclick="createWO()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg text-sm">
+              Criar ordem de serviço
+            </button>
+          </div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <script type="module" src="/shared/app.js"></script>
+  <script>
+  window.addEventListener("DOMContentLoaded", () => {
+      initLayout();
+      setPageTitle('Nova OS');
+
+      async function loadCustomers() {
+        try {
+          const resp = await api.get('/customers');
+          const data = await api.json(resp);
+          const sel = document.getElementById('customer');
+          (data.data || []).forEach(c => {
+            sel.insertAdjacentHTML('beforeend',
+              `<option value="${c.id}">${c.name} (${c.document})</option>`);
+          });
+        } catch (e) { showError(e.message); }
+      }
+
+      async function loadVehiclesForCustomer() {
+        const customerId = document.getElementById('customer').value;
+        const sel = document.getElementById('vehicle');
+        sel.innerHTML = '<option value="">Selecione...</option>';
+        sel.disabled = !customerId;
+        if (!customerId) return;
+        try {
+          const resp = await api.get('/vehicles?customer_id=' + customerId);
+          const data = await api.json(resp);
+          (data.data || []).forEach(v => {
+            sel.insertAdjacentHTML('beforeend',
+              `<option value="${v.id}">${v.license_plate} - ${v.brand} ${v.model} (${v.year})</option>`);
+          });
+        } catch (e) { showError(e.message); }
+      }
+
+      async function createWO() {
+        const title = document.getElementById('title').value;
+        const desc = document.getElementById('desc').value;
+        const customerId = document.getElementById('customer').value;
+        const vehicleId = document.getElementById('vehicle').value;
+
+        if (!title || !customerId || !vehicleId) {
+          showError('Preencha título, cliente e veículo');
+          return;
+        }
+
+        try {
+          const body = { title, customer_id: customerId, vehicle_id: vehicleId };
+          if (desc) body.description = desc;
+          const resp = await api.post('/work-orders', body);
+          const wo = await api.json(resp);
+          showToast('OS criada: ' + wo.code);
+          window.location.href = '/os.html?id=' + wo.id;
+        } catch (e) { showError(e.message); }
+      }
+
+      loadCustomers();
+
+    // Handlers inline (onclick=) resolvem no escopo global.
+    Object.assign(window, { createWO, loadCustomers, loadVehiclesForCustomer });
+  });
+  </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+/* Kanban board horizontal scroll */
+.kanban-board { display: flex; gap: 1rem; overflow-x: auto; padding-bottom: 1rem; }
+.kanban-col { min-width: 220px; width: 220px; flex-shrink: 0; }
+
+/* Card hover */
+.wo-card { transition: box-shadow 0.15s; cursor: pointer; }
+.wo-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }

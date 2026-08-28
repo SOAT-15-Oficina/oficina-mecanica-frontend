@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oficina - Clientes</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="w-56 bg-gray-900 text-white flex-shrink-0 flex flex-col"></aside>
+    <div class="flex-1 flex flex-col">
+      <header id="header" class="bg-white shadow px-6 py-3 flex justify-between items-center"></header>
+      <main class="flex-1 p-6">
+
+        <div class="flex items-center justify-between mb-6">
+          <div class="flex items-center gap-3">
+            <input id="search" type="text" placeholder="Buscar por documento..." class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-64">
+            <button onclick="loadCustomers()" class="bg-gray-200 hover:bg-gray-300 px-3 py-2 rounded-lg text-sm">Buscar</button>
+          </div>
+          <button onclick="openCreateModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium">Novo cliente</button>
+        </div>
+
+        <div class="bg-white rounded-xl shadow overflow-x-auto">
+          <table class="w-full min-w-[760px] text-sm">
+            <thead class="bg-gray-50 text-left text-gray-600">
+              <tr>
+                <th class="px-4 py-3 font-medium">Nome</th>
+                <th class="px-4 py-3 font-medium">Documento</th>
+                <th class="px-4 py-3 font-medium">Tipo</th>
+                <th class="px-4 py-3 font-medium">E-mail</th>
+                <th class="px-4 py-3 font-medium">Criado em</th>
+                <th class="px-4 py-3 font-medium text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="table-body" class="divide-y divide-gray-100"></tbody>
+          </table>
+          <div id="empty" class="hidden text-center py-8 text-gray-400 text-sm">Nenhum cliente encontrado</div>
+        </div>
+
+      </main>
+    </div>
+  </div>
+
+  <script type="module" src="/shared/app.js"></script>
+  <script>
+  window.addEventListener("DOMContentLoaded", () => {
+      initLayout();
+      setPageTitle('Clientes');
+
+      let currentCustomers = [];
+
+      async function loadCustomers() {
+        const doc = document.getElementById('search').value.trim();
+        const query = doc ? `?document=${doc}` : '';
+        try {
+          const resp = await api.get('/customers' + query);
+          const data = await api.json(resp);
+          const list = data.data || [];
+          currentCustomers = list;
+          const tbody = document.getElementById('table-body');
+          const empty = document.getElementById('empty');
+
+          if (list.length === 0) {
+            tbody.innerHTML = '';
+            empty.classList.remove('hidden');
+            return;
+          }
+          empty.classList.add('hidden');
+          tbody.innerHTML = list.map(c => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-3 align-middle font-medium">${escapeHtml(c.name)}</td>
+              <td class="px-4 py-3 align-middle font-mono text-xs">${escapeHtml(c.document)}</td>
+              <td class="px-4 py-3 align-middle">${escapeHtml(c.document_type)}</td>
+              <td class="px-4 py-3 align-middle">${escapeHtml(c.email || '')}</td>
+              <td class="px-4 py-3 align-middle text-gray-500">${formatDate(c.created_at)}</td>
+              <td class="px-4 py-3 align-middle text-right">
+                <div class="flex justify-end gap-2">
+                  <button onclick="openEditModal('${c.id}')" class="bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded-lg text-xs font-medium">Editar</button>
+                  <button onclick="deleteCustomer('${c.id}')" class="bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-lg text-xs font-medium">Excluir</button>
+                </div>
+              </td>
+            </tr>`).join('');
+        } catch (e) { showError(e.message); }
+      }
+
+      function openCreateModal() {
+        openModal('Novo cliente', `
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+              <input id="m-name" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+              <input id="m-email" type="email" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Documento</label>
+                <input id="m-doc" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="Somente números">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+                <select id="m-doctype" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                  <option value="CPF">CPF</option>
+                  <option value="CNPJ">CNPJ</option>
+                </select>
+              </div>
+            </div>
+            <button onclick="createCustomer()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm">Cadastrar</button>
+          </div>`);
+      }
+
+      function openEditModal(id) {
+        const customer = currentCustomers.find(c => c.id === id);
+        if (!customer) return showError('Cliente não encontrado na listagem');
+
+        openModal('Editar Cliente', `
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+              <input id="m-name" type="text" value="${escapeAttr(customer.name)}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+              <input id="m-email" type="email" value="${escapeAttr(customer.email)}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Documento</label>
+                <input id="m-doc" type="text" value="${escapeAttr(customer.document)}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="Somente números">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
+                <select id="m-doctype" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                  <option value="CPF" ${customer.document_type === 'CPF' ? 'selected' : ''}>CPF</option>
+                  <option value="CNPJ" ${customer.document_type === 'CNPJ' ? 'selected' : ''}>CNPJ</option>
+                </select>
+              </div>
+            </div>
+            <button onclick="updateCustomer('${customer.id}')" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm">Salvar alterações</button>
+          </div>`);
+      }
+
+      async function createCustomer() {
+        try {
+          const resp = await api.post('/customers', {
+            name: document.getElementById('m-name').value,
+            email: document.getElementById('m-email').value,
+            document: document.getElementById('m-doc').value,
+            document_type: document.getElementById('m-doctype').value,
+          });
+          await api.json(resp);
+          closeModal();
+          showToast('Cliente cadastrado');
+          loadCustomers();
+        } catch (e) { showError(e.message); }
+      }
+
+      async function updateCustomer(id) {
+        try {
+          const resp = await api.put('/customers/' + id, {
+            name: document.getElementById('m-name').value,
+            email: document.getElementById('m-email').value,
+            document: document.getElementById('m-doc').value,
+            document_type: document.getElementById('m-doctype').value,
+          });
+          await api.json(resp);
+          closeModal();
+          showToast('Cliente atualizado');
+          loadCustomers();
+        } catch (e) { showError(e.message); }
+      }
+
+      async function deleteCustomer(id) {
+        if (!confirm('Tem certeza de que deseja excluir este cliente?')) return;
+        try {
+          const resp = await api.del('/customers/' + id);
+          await api.ensureOk(resp);
+          showToast('Cliente excluído');
+          loadCustomers();
+        } catch (e) { showError(e.message); }
+      }
+
+      document.getElementById('search').addEventListener('keydown', e => { if (e.key === 'Enter') loadCustomers(); });
+      loadCustomers();
+
+    // Handlers inline (onclick=) resolvem no escopo global.
+    Object.assign(window, { createCustomer, deleteCustomer, loadCustomers, openCreateModal, openEditModal, updateCustomer });
+  });
+  </script>
+</body>
+</html>
