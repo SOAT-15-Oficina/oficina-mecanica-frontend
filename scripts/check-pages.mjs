@@ -47,7 +47,19 @@ for (const page of pages) {
     failures++;
   }
 
-  if (!missing.length) {
+  // Toda chamada a API tem de passar pelo prefixo /api. Sem ele o request cai
+  // no cache behavior default do CloudFront, que so aceita GET/HEAD/OPTIONS --
+  // um POST volta 403 antes de chegar ao API Gateway. Foi assim que o login
+  // quebrou em producao depois da migracao do painel para o S3.
+  const badFetches = [...html.matchAll(/fetch\(\s*([`'"])([^`'"]*)\1/g)]
+    .map((m) => m[2])
+    .filter((url) => url.startsWith('/') && !url.startsWith('/api/'));
+  if (badFetches.length) {
+    console.error(`✗ ${page}: fetch sem prefixo /api -- ${badFetches.join(', ')}`);
+    failures++;
+  }
+
+  if (!missing.length && !badFetches.length) {
     console.log(`✓ ${page} (${blocks.length} bloco(s), ${referenced.size} handler(s))`);
   }
 }

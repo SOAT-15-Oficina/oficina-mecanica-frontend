@@ -75,11 +75,16 @@
         document.getElementById('login-form').classList.remove('hidden');
       }
 
+      // Mesmo prefixo que shared/app.js usa. Sem ele a chamada cai no cache
+      // behavior default do CloudFront, que so aceita GET/HEAD/OPTIONS, e o
+      // POST volta como 403 antes de chegar ao API Gateway.
+      const API_BASE = "/api";
+
       async function doLogin() {
         const errEl = document.getElementById('error');
         errEl.classList.add('hidden');
         try {
-          const resp = await fetch('/auth/login', {
+          const resp = await fetch(`${API_BASE}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -101,7 +106,7 @@
         const errEl = document.getElementById('reg-error');
         errEl.classList.add('hidden');
         try {
-          const resp = await fetch('/auth/register', {
+          const resp = await fetch(`${API_BASE}/auth/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
