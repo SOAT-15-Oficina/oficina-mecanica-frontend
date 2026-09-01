@@ -98,16 +98,16 @@ o código todo, não sobre *new code*.
 
 | Gatilho | O que roda |
 |---|---|
-| PR → `main` | actionlint, Vitest com cobertura, validação das páginas, SonarQube + Quality Gate |
-| Push → `main` | `aws s3 sync`, invalidação do CloudFront, smoke check na URL pública |
+| PR → `main` ou `hml` | actionlint, Vitest com cobertura, validação das páginas, SonarQube + Quality Gate |
+| Push → `main` ou `hml` | `aws s3 sync`, invalidação do CloudFront, smoke check na URL pública |
 
 Deploy por **OIDC** (sem access key), resolvendo os destinos no SSM:
 
 | Parâmetro | Uso |
 |---|---|
-| `/oficina-mecanica/prod/frontend_bucket_name` | destino do `s3 sync` |
-| `/oficina-mecanica/prod/cloudfront_distribution_id` | invalidação |
-| `/oficina-mecanica/prod/public_domain` | smoke check |
+| `/oficina-mecanica/<ambiente>/frontend_bucket_name` | destino do `s3 sync` |
+| `/oficina-mecanica/<ambiente>/cloudfront_distribution_id` | invalidação |
+| `/oficina-mecanica/<ambiente>/public_domain` | smoke check |
 
 S3 e CloudFront vivem na **camada persistente** do Terraform: sobrevivem ao ciclo
 de `bring-up`/`tear-down`, então essa URL não muda entre apresentações. O bucket
@@ -116,11 +116,30 @@ de `bring-up`/`tear-down`, então essa URL não muda entre apresentações. O bu
 Os HTML sobem com `no-cache` (um deploy aparece imediatamente) e `shared/` com
 `max-age=86400`, invalidado a cada release.
 
+### Dois ambientes
+
+A **branch** escolhe o destino: `hml` publica em homologação, `main` em produção.
+Não há input de ambiente em lugar nenhum deste repositório — o `ref` já carrega a
+informação, e um input separado poderia contradizê-lo.
+
+| | homologação | produção |
+|---|---|---|
+| Branch | `hml` | `main` |
+| GitHub Environment | `homolog` | `production` |
+| Prefixo no SSM | `/oficina-mecanica/homolog` | `/oficina-mecanica/prod` |
+
+Por isso `AWS_DEPLOY_ROLE_ARN` é secret de **GitHub Environment**, não de
+repositório: os dois ambientes usam o mesmo nome de secret e apenas o escopo do
+Environment os separa. A trust policy da role repete a regra do lado da AWS — um
+push em `hml` não obtém credencial de produção.
+
+Arquitetura completa dos dois ambientes: `oficina-mecanica-infrastructure`.
+
 ### Secrets e variables necessários
 
 | Nome | Tipo | Conteúdo |
 |---|---|---|
-| `AWS_DEPLOY_ROLE_ARN` | secret | role assumida por OIDC (`s3:PutObject` no bucket + `cloudfront:CreateInvalidation`) |
+| `AWS_DEPLOY_ROLE_ARN` | secret de **Environment** (`production` e `homolog`) | role assumida por OIDC (`s3:PutObject` no bucket + `cloudfront:CreateInvalidation`) |
 | `AWS_REGION` | variable | `sa-east-1` |
 
 ## O que mudou ao sair do monolito
