@@ -31,6 +31,67 @@ const API_BASE = '/api';
 Uma CloudFront Function remove o `/api` antes de repassar à origem, então o
 monolito continua servindo `/customers` — sem nenhuma mudança de rota lá.
 
+## Arquitetura deste repositório
+
+```mermaid
+flowchart TB
+    U[Navegador] --> CF[CloudFront]
+    CF -->|/*| S3[(S3 privado<br/>Origin Access Control)]
+    CF -->|/api/* — Function remove o prefixo| GW[API Gateway]
+
+    subgraph BUNDLE [Conteúdo do bucket — este repositório]
+        direction TB
+        PAGES["*.html — uma página por tela<br/>index, board, os, nova-os,<br/>clientes, veiculos, servicos,<br/>insumos, aprovacao"]
+        APP["shared/app.js<br/>fetch, sessão, layout, toast, modal"]
+        HLP["shared/helpers.js<br/>funções puras — o que os testes cobrem"]
+        CSS[shared/style.css]
+    end
+
+    S3 --- BUNDLE
+    PAGES --> APP --> HLP
+    APP -->|Bearer JWT| CF
+```
+
+Sem bundler e sem framework: o que está no repositório é o que vai para o
+bucket. `helpers.js` existe separado justamente para ser testável em Node sem
+DOM — `app.js` toca `window`, `helpers.js` não.
+
+**Fluxo de deploy deste repositório:**
+
+```mermaid
+flowchart LR
+    PR[PR] --> L[lint: actionlint]
+    PR --> T[test: vitest sobre helpers]
+    PR --> Q[quality: SonarQube efêmero]
+    PUSH[push em hml/main] --> S[aws s3 sync]
+    S --> INV[cloudfront create-invalidation]
+```
+
+## APIs consumidas
+
+Este repositório não expõe API; consome as dos outros dois. Os contratos:
+
+| Origem | Contrato |
+|---|---|
+| Autenticação (`/api/auth/*`) | [`oficina-mecanica-serverless/docs/openapi.yaml`](https://github.com/SOAT-15-Oficina/oficina-mecanica-serverless/blob/main/docs/openapi.yaml) |
+| Negócio (todo o resto sob `/api`) | [`oficina-mecanica-monolith/docs/swagger.yaml`](https://github.com/SOAT-15-Oficina/oficina-mecanica-monolith/blob/main/docs/swagger.yaml) |
+| Swagger UI (ambiente no ar) | `<URL_PUBLICA>/api/docs` |
+
+## Deploy ativo
+
+O painel **é** a URL pública do sistema — a raiz do CloudFront. O ambiente é
+efêmero, mas o domínio é estável entre ciclos:
+
+```bash
+aws ssm get-parameter --name /oficina-mecanica/prod/public_base_url \
+  --query Parameter.Value --output text
+```
+
+| Ambiente | URL |
+|---|---|
+| Produção | _preencher com a saída do comando acima, com o ambiente no ar_ |
+| Homologação | `/oficina-mecanica/homolog/public_base_url` |
+
 ## Estrutura
 
 ```
@@ -110,7 +171,7 @@ Deploy por **OIDC** (sem access key), resolvendo os destinos no SSM:
 | `/oficina-mecanica/<ambiente>/public_domain` | smoke check |
 
 S3 e CloudFront vivem na **camada persistente** do Terraform: sobrevivem ao ciclo
-de `bring-up`/`tear-down`, então essa URL não muda entre apresentações. O bucket
+de `bring-up`/`tear-down`, então essa URL não muda entre ciclos. O bucket
 é privado, acessível apenas pelo CloudFront via **OAC**.
 
 Os HTML sobem com `no-cache` (um deploy aparece imediatamente) e `shared/` com
