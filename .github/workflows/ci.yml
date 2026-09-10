@@ -53,7 +53,7 @@ jobs:
 
       # O painel nao tem bundler: o que vai para o S3 e o proprio HTML/JS. Se
       # um bloco inline nao for JavaScript valido, isso so apareceria no browser
-      # do avaliador -- entao valida aqui.
+      # do usuario final -- entao valida aqui.
       - name: Validate inline page scripts
         run: node scripts/check-pages.mjs
 
@@ -150,7 +150,7 @@ jobs:
 
       # S3 e CloudFront vivem na camada PERSISTENTE do Terraform: sobrevivem ao
       # ciclo de bring-up/tear-down, entao estes valores nao mudam entre
-      # apresentacoes.
+      # ciclos.
       - name: Resolve infrastructure outputs
         run: |
           get() { aws ssm get-parameter --name "${SSM_PREFIX}/$1" --query Parameter.Value --output text; }
