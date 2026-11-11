@@ -1,8 +1,8 @@
 # oficina-mecanica-frontend
 
 Painel web da oficina: board de ordens de serviço, cadastros (clientes,
-veículos, serviços, insumos), abertura de OS e a página pública de aprovação de
-orçamento.
+veículos, serviços, insumos), abertura e acompanhamento de OS (com o estado da
+Saga), a bancada da oficina e a página pública de orçamento e pagamento.
 
 HTML + JavaScript estático, sem bundler e sem framework. Servido por **S3 +
 CloudFront**.
@@ -18,8 +18,10 @@ CloudFront serve as duas coisas:
 
 ```
 CloudFront ─┬─ /*      → bucket S3 (este repositório)
-            └─ /api/*  → API Gateway ─┬─ /auth/*  → Lambda
-                                      └─ /*       → ALB interno → EKS
+            └─ /api/*  → API Gateway ─┬─ /auth/*       → Lambda
+                                      ├─ /billing/*    → Billing Service
+                                      ├─ /execution/*  → Execution Service
+                                      └─ /*            → OS Service
 ```
 
 Como painel e API compartilham a origem, `shared/app.js` só precisa do prefixo:
@@ -29,7 +31,8 @@ const API_BASE = '/api';
 ```
 
 Uma CloudFront Function remove o `/api` antes de repassar à origem, então o
-monolito continua servindo `/customers` — sem nenhuma mudança de rota lá.
+OS Service continua servindo `/customers`, o Billing `/billing/...` e o
+Execution `/execution/...`.
 
 ## Arquitetura deste repositório
 
@@ -41,7 +44,7 @@ flowchart TB
 
     subgraph BUNDLE [Conteúdo do bucket — este repositório]
         direction TB
-        PAGES["*.html — uma página por tela<br/>index, board, os, nova-os,<br/>clientes, veiculos, servicos,<br/>insumos, aprovacao"]
+        PAGES["*.html — uma página por tela<br/>index, board, os, nova-os, bancada,<br/>clientes, veiculos, servicos,<br/>insumos, aprovacao"]
         APP["shared/app.js<br/>fetch, sessão, layout, toast, modal"]
         HLP["shared/helpers.js<br/>funções puras — o que os testes cobrem"]
         CSS[shared/style.css]
@@ -69,13 +72,55 @@ flowchart LR
 
 ## APIs consumidas
 
-Este repositório não expõe API; consome as dos outros dois. Os contratos:
+Este repositório não expõe API; consome as dos serviços da Fase 4. Contratos:
 
 | Origem | Contrato |
 |---|---|
 | Autenticação (`/api/auth/*`) | [`oficina-mecanica-serverless/docs/openapi.yaml`](https://github.com/SOAT-15-Oficina/oficina-mecanica-serverless/blob/main/docs/openapi.yaml) |
-| Negócio (todo o resto sob `/api`) | [`oficina-mecanica-monolith/docs/swagger.yaml`](https://github.com/SOAT-15-Oficina/oficina-mecanica-monolith/blob/main/docs/swagger.yaml) |
-| Swagger UI (ambiente no ar) | `<URL_PUBLICA>/api/docs` |
+| OS Service (todo o resto sob `/api`) | [`oficina-mecanica-monolith/docs/swagger.yaml`](https://github.com/SOAT-15-Oficina/oficina-mecanica-monolith/blob/main/docs/swagger.yaml) |
+| Billing (`/api/billing/*`) | [`oficina-mecanica-billing-service/docs/swagger.yaml`](https://github.com/SOAT-15-Oficina/oficina-mecanica-billing-service/blob/main/docs/swagger.yaml) |
+| Execution (`/api/execution/*`) | [`oficina-mecanica-execution-service/docs/swagger.yaml`](https://github.com/SOAT-15-Oficina/oficina-mecanica-execution-service/blob/main/docs/swagger.yaml) |
+
+### Páginas e serviços que cada uma chama
+
+| Página | Serviço | Rotas |
+|---|---|---|
+| `index.html` | Auth | `POST /auth/login`, `POST /auth/register` |
+| `board.html` | OS | `GET /work-orders` |
+| `nova-os.html` | OS | `GET /customers`, `GET /vehicles`, `POST /work-orders` (abre a OS e inicia a Saga) |
+| `os.html` | OS | `GET /work-orders/{id}`, `/history`, `/saga`; `POST /work-orders/{id}/deliver` e `/cancel`; itens e insumos (`POST`/`DELETE /work-orders/{id}/services...`) |
+| | Billing | `GET /billing/quotes/by-work-order/{id}` |
+| | Execution | `GET /execution/tickets/{id}` |
+| `bancada.html` | Execution | `GET /execution/queue`, `GET /execution/bays/{branch}`, `PUT /execution/bays/{branch}/availability`, `GET /execution/tickets/{id}`, `POST .../diagnosis/start`, `.../diagnosis/complete`, `.../repair/start`, `.../items/{itemId}/start` e `/finish` |
+| | OS | `GET /work-orders?status=EM_DIAGNOSTICO` e `EM_EXECUCAO` (o que já saiu da fila) |
+| `aprovacao.html` (pública) | Billing | `GET /billing/public/quotes/{quoteId}`, `.../items/{itemId}/approve` e `/reject`, `.../approve-all` e `/reject-all` |
+| | OS | `GET /public/work-orders/{code}?document=` (status, histórico e `payment_url`) |
+| `clientes.html`, `veiculos.html`, `servicos.html`, `insumos.html` | OS | CRUD de catálogos, sem mudança na Fase 4 |
+
+### Status e ações da OS
+
+O status é dirigido pela Saga do OS Service; o painel não troca status
+livremente. Ao operador restam **Registrar entrega** (só em `FINALIZADA`) e
+**Cancelar OS**: antes do pivô (aceite do reparo pela bancada) o cancelamento
+dispara a compensação e a OS vira `CANCELADA` quando todas as compensações são
+confirmadas; depois do pivô o OS responde 409 e a página mostra o motivo.
+Serviços e insumos só podem ser adicionados ou removidos em `RECEBIDA` ou
+`EM_DIAGNOSTICO`. O status `AGUARDANDO_PAGAMENTO` (entre a aprovação do
+orçamento e a confirmação do Mercado Pago) tem coluna própria no board.
+
+Iniciar e finalizar itens saiu do detalhe da OS e foi para a **bancada**, que
+mostra as filas de diagnóstico e de reparo por filial, a disponibilidade da
+bancada e as ações da ficha.
+
+### Link público do orçamento
+
+Os e-mails do Billing apontam direto para as rotas GET da API
+(`/api/billing/public/quotes/{quoteId}/...`). A página `aprovacao.html` recebe o
+orçamento por query string — `?quote=<quoteId>&code=<OS>&document=<CPF>` — e o
+detalhe da OS mostra esse link enquanto houver item pendente. Com `quote` a
+página lista os itens e permite aprovar ou reprovar; com `code` e `document`
+mostra o status e o histórico da OS. Quando o orçamento é aprovado, aparece o
+botão **Pagar agora** com o link do Mercado Pago.
 
 ## Deploy ativo
 
@@ -126,9 +171,12 @@ npm run serve      # http://localhost:3000
 ```
 
 Servido assim, o painel carrega mas **nenhuma chamada à API funciona** — não há
-nada em `/api`. Para o fluxo completo (front + Lambda + monolito atrás de um
-nginx que replica o roteamento do CloudFront), use `docker-compose.local.yml` no
-repositório de infraestrutura.
+nada em `/api`. Para o fluxo completo use `local/docker-compose.local.yml` no
+repositório de infraestrutura: o gateway nginx monta este diretório como raiz
+do painel e roteia `/api/auth`, `/api/billing`, `/api/execution` e o restante de
+`/api` para o OS Service, então mudanças nos arquivos aparecem sem rebuild. O
+Mercado Pago é simulado pelo `mpfake` (`http://localhost:8095`) e os e-mails
+caem no MailHog (`http://localhost:8025`).
 
 ## Testes
 
@@ -139,8 +187,11 @@ node scripts/check-pages.mjs
 ```
 
 Os testes cobrem as funções puras: escape de HTML/atributo, `parseJwt`,
-`formatCents`, `formatDate`, `statusBadge` e a consistência das tabelas de
-status. `app.js` e as páginas ficam fora da métrica de cobertura — exercitá-los
+`formatCents`, `formatDate`, `statusBadge`, a consistência das tabelas de
+status e as regras da Fase 4 (`tests/fase4.test.js`): rótulos de ticket,
+orçamento, pagamento e Saga, quando itens são editáveis, quando entregar ou
+cancelar, link de pagamento pendente, link público de aprovação, validação de
+filial e as ações e rotas da bancada. `app.js` e as páginas ficam fora da métrica de cobertura — exercitá-los
 exigiria E2E, que foi deixado fora de escopo.
 
 ## Qualidade
