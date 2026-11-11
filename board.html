@@ -54,20 +54,15 @@
             const vehicle = wo.vehicle ? `${wo.vehicle.brand} ${wo.vehicle.model}` : '';
 
             col.insertAdjacentHTML('beforeend', `
-              <a href="/os.html?id=${wo.id}" class="wo-card block bg-white rounded-lg p-3 border border-gray-200">
+              <a href="/os.html?id=${encodeURIComponent(wo.id)}" class="wo-card block bg-white rounded-lg p-3 border border-gray-200">
                 <div class="flex items-center justify-between mb-1">
-                  <span class="text-xs font-mono text-gray-500">${wo.code}</span>
+                  <span class="text-xs font-mono text-gray-500">${escapeHtml(wo.code)}</span>
                 </div>
-                <p class="text-sm font-medium text-gray-800 truncate">${wo.title}</p>
-                <p class="text-xs text-gray-500 mt-1 truncate">${customer}</p>
-                <p class="text-xs text-gray-400 truncate">${vehicle}</p>
+                <p class="text-sm font-medium text-gray-800 truncate">${escapeHtml(wo.title)}</p>
+                <p class="text-xs text-gray-500 mt-1 truncate">${escapeHtml(customer)}</p>
+                <p class="text-xs text-gray-400 truncate">${escapeHtml(vehicle)}</p>
               </a>`);
           });
-
-          // Also load CANCELADA orders
-          const cancelResp = await api.get('/work-orders?limit=100&status=CANCELADA');
-          const cancelData = await api.json(cancelResp);
-          const cancelOrders = cancelData.data || [];
 
           STATUS_ORDER.forEach(s => {
             const el = document.getElementById('count-' + s);
