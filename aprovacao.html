@@ -6,25 +6,50 @@
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 </head>
 <body class="bg-gray-50 min-h-screen">
-
-  <!-- Public page — no sidebar, no auth -->
   <div class="max-w-2xl mx-auto py-10 px-4">
 
     <div class="text-center mb-8">
       <h1 class="text-2xl font-bold text-gray-800">Oficina</h1>
-      <p class="text-gray-500 text-sm">Aprovação de orçamento</p>
+      <p class="text-gray-500 text-sm">Orçamento e acompanhamento da ordem de serviço</p>
     </div>
 
-    <!-- Lookup form -->
+    <div id="payment" class="hidden bg-indigo-50 border border-indigo-200 rounded-xl p-5 mb-6 text-center"></div>
+
+    <div id="quote" class="hidden">
+      <div class="bg-white rounded-xl shadow p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="text-lg font-bold" id="quote-code"></h2>
+            <p class="text-sm text-gray-500" id="quote-customer"></p>
+            <div id="quote-status" class="mt-1"></div>
+          </div>
+          <div class="text-right">
+            <p class="text-sm text-gray-500">Total do orçamento</p>
+            <p class="text-xl font-bold text-gray-800" id="quote-total"></p>
+            <p class="text-xs text-gray-500" id="quote-approved"></p>
+          </div>
+        </div>
+        <p id="quote-shortage" class="hidden text-sm text-orange-600 mb-3">Algumas peças estão em falta no estoque e podem atrasar o serviço.</p>
+        <div id="quote-items" class="space-y-3"></div>
+        <div id="bulk-actions" class="hidden mt-6">
+          <div class="flex gap-3">
+            <button onclick="decideAll('approve')" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-medium py-3 rounded-lg text-sm">Aprovar todos</button>
+            <button onclick="decideAll('reject')" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-3 rounded-lg text-sm">Reprovar todos</button>
+          </div>
+        </div>
+        <div id="status-message" class="hidden mt-6 text-center p-4 rounded-lg"></div>
+      </div>
+    </div>
+
     <div id="lookup" class="bg-white rounded-xl shadow p-6 mb-6">
       <h2 class="text-lg font-semibold mb-4">Consultar ordem de serviço</h2>
       <div class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Código da OS</label>
+          <label for="code" class="block text-sm font-medium text-gray-700 mb-1">Código da OS</label>
           <input id="code" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="Ex: OS-20260507-A1B2">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Documento (CPF/CNPJ)</label>
+          <label for="document" class="block text-sm font-medium text-gray-700 mb-1">Documento (CPF/CNPJ)</label>
           <input id="document" type="text" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="Somente números">
         </div>
         <div id="lookup-error" class="text-red-600 text-sm hidden"></div>
@@ -32,210 +57,171 @@
       </div>
     </div>
 
-    <!-- Work order detail (hidden until lookup) -->
-    <div id="detail" class="hidden">
-      <div class="bg-white rounded-xl shadow p-6 mb-6">
-        <div class="flex items-center justify-between mb-4">
-          <div>
-            <h2 class="text-lg font-bold" id="wo-code"></h2>
-            <div id="wo-status" class="mt-1"></div>
-          </div>
-          <div class="text-right">
-            <p class="text-sm text-gray-500">Total estimado</p>
-            <p class="text-xl font-bold text-gray-800" id="wo-total"></p>
-          </div>
+    <div id="detail" class="hidden bg-white rounded-xl shadow p-6 mb-6">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-lg font-bold" id="wo-code"></h2>
+          <div id="wo-status" class="mt-1"></div>
         </div>
-
-        <div class="flex flex-wrap gap-4 text-xs text-gray-500 pt-3 border-t" id="wo-dates"></div>
-      </div>
-
-      <!-- Services list -->
-      <div class="bg-white rounded-xl shadow p-6 mb-6">
-        <h3 class="text-lg font-semibold mb-4">Serviços</h3>
-        <div id="services-list" class="space-y-3"></div>
-      </div>
-
-      <!-- Bulk actions -->
-      <div id="bulk-actions" class="hidden">
-        <div class="flex gap-3">
-          <button onclick="approveAll()" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-medium py-3 rounded-lg text-sm">
-            Aprovar todos
-          </button>
-          <button onclick="rejectAll()" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-3 rounded-lg text-sm">
-            Reprovar todos
-          </button>
+        <div class="text-right">
+          <p class="text-sm text-gray-500">Total estimado</p>
+          <p class="text-xl font-bold text-gray-800" id="wo-total"></p>
         </div>
       </div>
-
-      <div id="status-message" class="hidden mt-6 text-center p-4 rounded-lg"></div>
+      <div id="wo-services" class="space-y-2 mb-4"></div>
+      <h3 class="text-sm font-semibold text-gray-700 mb-2">Histórico</h3>
+      <ol id="wo-history" class="space-y-1 text-sm"></ol>
     </div>
   </div>
 
+  <script type="module" src="/shared/app.js"></script>
   <script>
   window.addEventListener("DOMContentLoaded", () => {
-  // O API Gateway fica sob /api/* na mesma distribuicao CloudFront
-  // que serve esta pagina -- mesma origem, sem CORS.
-  const API_BASE = "/api";
-
-      // Minimal standalone JS — no app.js dependency for public page
       const params = new URLSearchParams(window.location.search);
-      const preCode = params.get('code') || '';
-      const preDoc = params.get('document') || '';
+      const quoteId = params.get('quote') || '';
+      let quote = null;
+      let quotePaymentUrl = '';
+      let woPaymentUrl = '';
+      let polls = 0;
 
-      if (preCode) document.getElementById('code').value = preCode;
-      if (preDoc) document.getElementById('document').value = preDoc;
+      document.getElementById('code').value = params.get('code') || '';
+      document.getElementById('document').value = params.get('document') || '';
 
-      let woData = null;
-      let woId = null;
+      function show(id, visible) { document.getElementById(id).classList.toggle('hidden', !visible); }
 
-      function formatCents(c) { return 'R$ ' + (c / 100).toFixed(2).replace('.', ','); }
-      function formatDate(d) { return d ? new Date(d).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''; }
+      function showStatusMsg(msg, cls) {
+        const el = document.getElementById('status-message');
+        el.textContent = msg;
+        el.className = `mt-6 text-center p-4 rounded-lg text-sm font-medium ${cls}`;
+      }
 
-      const STATUS_LABELS = {
-        RECEBIDA: 'Recebida', EM_DIAGNOSTICO: 'Em diagnóstico', AGUARDANDO_APROVACAO: 'Aguardando aprovação',
-        APROVADO: 'Aprovado', EM_EXECUCAO: 'Em execução', FINALIZADA: 'Finalizada', ENTREGUE: 'Entregue', CANCELADA: 'Cancelada'
-      };
+      function renderPayment() {
+        const url = quotePaymentUrl || woPaymentUrl;
+        const el = document.getElementById('payment');
+        show('payment', !!url);
+        if (!url) return;
+        el.innerHTML = `<p class="text-indigo-800 font-medium mb-3">Orçamento aprovado. Falta apenas o pagamento para liberarmos o serviço.</p>
+          <a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-3 rounded-lg text-sm">Pagar agora</a>`;
+      }
+
+      function publicQuotePath(suffix) {
+        return `/billing/public/quotes/${encodeURIComponent(quoteId)}${suffix || ''}`;
+      }
+
+      async function loadQuote() {
+        if (!quoteId) return;
+        try {
+          renderQuote(await api.json(await api.get(publicQuotePath())));
+        } catch (e) {
+          show('quote', true);
+          showStatusMsg('Não foi possível carregar o orçamento: ' + e.message, 'bg-red-50 text-red-700');
+        }
+      }
+
+      function renderQuote(q) {
+        quote = q;
+        show('quote', true);
+        document.getElementById('quote-code').textContent = 'Orçamento da OS ' + (q.work_order_code || '');
+        document.getElementById('quote-customer').textContent = q.customer_name || '';
+        document.getElementById('quote-status').innerHTML = metaBadge(QUOTE_STATUS_META, q.status);
+        document.getElementById('quote-total').textContent = formatCents(q.total_cents || 0);
+        document.getElementById('quote-approved').textContent = q.status === 'ENVIADO' ? '' : 'Aprovado: ' + formatCents(q.approved_total_cents || 0);
+        show('quote-shortage', !!q.supply_shortage);
+
+        const open = hasPendingDecision(q);
+        document.getElementById('quote-items').innerHTML = (q.items || []).map(i => `
+          <div class="border border-gray-200 rounded-lg p-4 flex items-center justify-between">
+            <div>
+              <span class="font-medium">${escapeHtml(i.title)}</span>
+              <span class="ml-2 text-sm text-gray-500">${formatCents(i.price_cents || 0)}</span>
+              <span class="ml-2">${metaBadge(DECISION_META, i.decision)}</span>
+            </div>
+            ${open && i.decision === 'PENDENTE' ? `<div class="flex items-center gap-2">
+              <button onclick="decideItem('${escapeAttr(i.work_order_service_id)}','approve')" class="bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1 rounded text-xs font-medium">Aprovar</button>
+              <button onclick="decideItem('${escapeAttr(i.work_order_service_id)}','reject')" class="bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded text-xs font-medium">Reprovar</button>
+            </div>` : ''}
+          </div>`).join('');
+        show('bulk-actions', open);
+
+        const messages = {
+          APROVADO: ['Orçamento aprovado. Obrigado!', 'bg-green-50 text-green-700'],
+          REPROVADO: ['Orçamento reprovado. Entraremos em contato para a devolução do veículo.', 'bg-red-50 text-red-700'],
+          CANCELADO: ['Este orçamento foi cancelado.', 'bg-gray-100 text-gray-700'],
+        };
+        const msg = messages[q.status];
+        if (msg) showStatusMsg(msg[0], msg[1]); else show('status-message', false);
+
+        quotePaymentUrl = q.payment_url || '';
+        renderPayment();
+        if (q.status === 'APROVADO' && !quotePaymentUrl && polls < 10) {
+          polls++;
+          setTimeout(refreshAll, 3000);
+        }
+      }
+
+      function refreshAll() {
+        loadQuote();
+        if (document.getElementById('code').value && document.getElementById('document').value) lookupWO();
+      }
+
+      async function decide(path) {
+        try {
+          const data = await api.json(await api.get(publicQuotePath(path)));
+          if (data.quote) renderQuote(data.quote); else await loadQuote();
+          if (data.message) showStatusMsg(data.message, 'bg-blue-50 text-blue-700');
+          if (document.getElementById('code').value && document.getElementById('document').value) lookupWO();
+        } catch (e) {
+          await loadQuote();
+          showStatusMsg('Não foi possível registrar a decisão: ' + e.message, 'bg-red-50 text-red-700');
+        }
+      }
+
+      function decideItem(itemId, action) {
+        decide(`/items/${encodeURIComponent(itemId)}/${action}`);
+      }
+
+      function decideAll(action) {
+        const question = action === 'approve' ? 'Aprovar todos os itens pendentes?' : 'Reprovar todos os itens pendentes?';
+        if (!confirm(question)) return;
+        decide(`/${action}-all`);
+      }
 
       async function lookupWO() {
         const code = document.getElementById('code').value.trim();
         const doc = document.getElementById('document').value.trim();
         const errEl = document.getElementById('lookup-error');
         errEl.classList.add('hidden');
-
         if (!code || !doc) { errEl.textContent = 'Preencha código e documento'; errEl.classList.remove('hidden'); return; }
-
         try {
-          const resp = await fetch(`${API_BASE}/public/work-orders/${code}?document=${doc}`);
-          if (!resp.ok) {
-            const data = await resp.json().catch(() => ({}));
-            throw new Error(data.error || 'OS não encontrada');
-          }
-          woData = await resp.json();
-
-          // We need the work order ID for approval actions.
-          // The public endpoint doesn't return ID, so we extract from the services approval flow.
-          // We'll need to look up work orders by code; for now we use the code for display.
-
-          document.getElementById('lookup').classList.add('hidden');
-          document.getElementById('detail').classList.remove('hidden');
-          renderDetail();
+          const resp = await api.get(`/public/work-orders/${encodeURIComponent(code)}?document=${encodeURIComponent(doc)}`);
+          if (resp.status === 404) throw new Error('OS não encontrada');
+          renderDetail(await api.json(resp));
         } catch (e) {
           errEl.textContent = e.message;
           errEl.classList.remove('hidden');
         }
       }
 
-      function renderDetail() {
-        const d = woData;
+      function renderDetail(d) {
+        show('detail', true);
         document.getElementById('wo-code').textContent = d.code;
-        document.getElementById('wo-status').innerHTML =
-          `<span class="inline-block px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">${STATUS_LABELS[d.status] || d.status}</span>`;
-        document.getElementById('wo-total').textContent = formatCents(d.total_estimated_price_cents);
-
-        const dates = [];
-        if (d.received_at) dates.push('Recebida: ' + formatDate(d.received_at));
-        if (d.quote_sent_at) dates.push('Orçamento: ' + formatDate(d.quote_sent_at));
-        if (d.approved_at) dates.push('Aprovada: ' + formatDate(d.approved_at));
-        if (d.started_at) dates.push('Iniciada: ' + formatDate(d.started_at));
-        if (d.finished_at) dates.push('Finalizada: ' + formatDate(d.finished_at));
-        if (d.delivered_at) dates.push('Entregue: ' + formatDate(d.delivered_at));
-        document.getElementById('wo-dates').innerHTML = dates.map(t => `<span>${t}</span>`).join('');
-
-        const svcList = document.getElementById('services-list');
-        const hasPending = (d.services || []).some(s => s.approval_status === 'PENDENTE');
-
-        svcList.innerHTML = (d.services || []).map(s => {
-          const isPending = s.approval_status === 'PENDENTE';
-          const statusColor = s.approval_status === 'APROVADO' ? 'text-green-600' : s.approval_status === 'REPROVADO' ? 'text-red-600' : 'text-gray-600';
-          const statusLabel = s.approval_status === 'APROVADO' ? 'Aprovado' : s.approval_status === 'REPROVADO' ? 'Reprovado' : 'Pendente';
-
-          return `
-            <div class="border border-gray-200 rounded-lg p-4">
-              <div class="flex items-center justify-between">
-                <div>
-                  <span class="font-medium">${s.title}</span>
-                  <span class="ml-2 text-sm ${statusColor} font-medium">${statusLabel}</span>
-                </div>
-                ${isPending ? `
-                  <div class="flex items-center gap-2">
-                    <button onclick="approveService('${s.title}')" class="bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1 rounded text-xs font-medium">Aprovar</button>
-                    <button onclick="rejectService('${s.title}')" class="bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded text-xs font-medium">Reprovar</button>
-                  </div>` : ''}
-              </div>
-            </div>`;
-        }).join('');
-
-        const bulkEl = document.getElementById('bulk-actions');
-        if (hasPending) { bulkEl.classList.remove('hidden'); } else { bulkEl.classList.add('hidden'); }
-
-        if (d.status === 'CANCELADA') {
-          showStatusMsg('Esta OS foi cancelada.', 'bg-red-50 text-red-700');
-        } else if (d.status === 'APROVADO' || d.status === 'EM_EXECUCAO' || d.status === 'FINALIZADA' || d.status === 'ENTREGUE') {
-          showStatusMsg('Orçamento já avaliado. Obrigado!', 'bg-green-50 text-green-700');
-        }
+        document.getElementById('wo-status').innerHTML = statusBadge(d.status);
+        document.getElementById('wo-total').textContent = formatCents(d.total_estimated_price_cents || 0);
+        document.getElementById('wo-services').innerHTML = (d.services || []).map(s => `
+          <div class="flex items-center justify-between text-sm border-b pb-2">
+            <span>${escapeHtml(s.title)}</span>
+            <span class="flex gap-2">${metaBadge(DECISION_META, s.approval_status)}${metaBadge(ITEM_STATUS_META, s.status)}</span>
+          </div>`).join('');
+        document.getElementById('wo-history').innerHTML = (d.history || []).map(h => `
+          <li class="flex items-center gap-3"><span class="text-xs text-gray-400 w-28">${escapeHtml(formatDate(h.changed_at))}</span>${statusBadge(h.status)}</li>`).join('');
+        woPaymentUrl = d.payment_url || '';
+        renderPayment();
       }
 
-      function showStatusMsg(msg, cls) {
-        const el = document.getElementById('status-message');
-        el.textContent = msg;
-        el.className = `mt-6 text-center p-4 rounded-lg text-sm font-medium ${cls}`;
-        el.classList.remove('hidden');
-      }
-
-      // For the public approval, we need to use the approval endpoints.
-      // The public work-order endpoint returns service titles but not IDs.
-      // We need to use work order ID. Let's get it from the URL code.
-      // Actually the approve-all/reject-all endpoints need the work order ID.
-      // Since the public endpoint doesn't return it, we'll use the code to fetch
-      // and handle approvals via the work-order-level endpoints.
-
-      // The email links use full paths like /public/approvals/work-orders/{id}/approve-all
-      // For the UI, we need the WO ID. Let's extract it from the lookup code parameter
-      // or use a workaround: the lookup result has a code, we can add an approach
-      // where the user gets linked with the ID pre-filled.
-
-      // Simple approach: when linked from OS detail page, the URL can include the WO ID
-      const preWoId = params.get('woId') || '';
-
-      async function approveAll() {
-        if (!preWoId) { alert('Link de aprovação inválido. Use o link enviado por e-mail.'); return; }
-        try {
-          const resp = await fetch(`${API_BASE}/public/approvals/work-orders/${preWoId}/approve-all`);
-          if (!resp.ok) throw new Error('Erro ao aprovar');
-          showStatusMsg('Todos os serviços foram aprovados!', 'bg-green-50 text-green-700');
-          document.getElementById('bulk-actions').classList.add('hidden');
-          lookupWO();
-        } catch (e) { alert(e.message); }
-      }
-
-      async function rejectAll() {
-        if (!preWoId) { alert('Link de aprovação inválido. Use o link enviado por e-mail.'); return; }
-        try {
-          const resp = await fetch(`${API_BASE}/public/approvals/work-orders/${preWoId}/reject-all`);
-          if (!resp.ok) throw new Error('Erro ao reprovar');
-          showStatusMsg('Todos os serviços foram reprovados.', 'bg-red-50 text-red-700');
-          document.getElementById('bulk-actions').classList.add('hidden');
-          lookupWO();
-        } catch (e) { alert(e.message); }
-      }
-
-      // Individual service approval needs the work_order_service ID.
-      // Since public endpoint doesn't expose it, individual buttons are a
-      // placeholder — the actual email links carry the correct IDs.
-      async function approveService(title) {
-        alert('Para aprovar serviços individualmente, use os links enviados no e-mail de orçamento.\n\nServiço: ' + title);
-      }
-      async function rejectService(title) {
-        alert('Para reprovar serviços individualmente, use os links enviados no e-mail de orçamento.\n\nServiço: ' + title);
-      }
-
-      // Auto-lookup if params provided
-      if (preCode && preDoc) lookupWO();
-
+      refreshAll();
       document.getElementById('document').addEventListener('keydown', e => { if (e.key === 'Enter') lookupWO(); });
 
-    // Handlers inline (onclick=) resolvem no escopo global.
-    Object.assign(window, { approveAll, approveService, formatCents, formatDate, lookupWO, rejectAll, rejectService, renderDetail, showStatusMsg });
+    Object.assign(window, { decideAll, decideItem, lookupWO });
   });
   </script>
 </body>
