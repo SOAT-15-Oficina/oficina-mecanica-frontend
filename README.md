@@ -198,6 +198,11 @@ cancelar, QR Code do pagamento pendente (imagem, copia e cola e link), link púb
 filial e as ações e rotas da bancada. `app.js` e as páginas ficam fora da métrica de cobertura — exercitá-los
 exigiria E2E, que foi deixado fora de escopo.
 
+**Evidência no CI:** [execução do PR #5 para
+`hml`](https://github.com/SOAT-15-Oficina/oficina-mecanica-frontend/actions/runs/43680321482).
+A aba *Summary* mostra o resumo do SonarQube publicado pelo job `quality`:
+Quality Gate, cobertura, bugs, vulnerabilidades e duplicação.
+
 ## Qualidade
 
 ```bash
