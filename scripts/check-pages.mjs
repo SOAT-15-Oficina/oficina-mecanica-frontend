@@ -16,6 +16,9 @@ const GLOBALS_FROM_APP_JS = new Set([
   'initLayout', 'setPageTitle',
   'showToast', 'showError', 'openModal', 'closeModal',
   'parseJwt', 'escapeHtml', 'escapeAttr', 'formatCents', 'formatDate', 'statusBadge',
+  'metaBadge', 'canEditItems', 'canDeliver', 'canRequestCancel', 'pendingQRCode', 'qrCodeFromUrl', 'qrImageUrl', 'qrCodeHtml',
+  'approvalPageUrl', 'hasPendingDecision', 'isValidBranch', 'ticketActions', 'itemAction',
+  'ticketActionPath', 'errorMessage',
 ]);
 
 const pages = readdirSync('.').filter((f) => f.endsWith('.html'));

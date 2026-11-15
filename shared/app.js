@@ -3,8 +3,13 @@
 // para as paginas continuarem usando handlers inline (onclick=).
 
 import {
-  STATUS_META, STATUS_ORDER, STATUS_ACTIONS,
+  STATUS_META, STATUS_ORDER,
+  TICKET_STATUS_META, ITEM_STATUS_META, DECISION_META, QUOTE_STATUS_META,
+  PAYMENT_STATUS_META, SAGA_STATUS_META,
   parseJwt, escapeHtml, escapeAttr, formatCents, formatDate, statusBadge,
+  metaBadge, canEditItems, canDeliver, canRequestCancel, pendingQRCode, qrCodeFromUrl, qrImageUrl, qrCodeHtml,
+  approvalPageUrl, hasPendingDecision, isValidBranch, ticketActions, itemAction,
+  ticketActionPath, errorMessage,
 } from './helpers.js';
 
 // ── API Client ──────────────────────────────────────────────────────────────
@@ -46,19 +51,20 @@ const api = {
   put(path, body) { return this.request('PUT', path, body); },
   del(path) { return this.request('DELETE', path); },
 
+  async fail(resp) {
+    const body = await resp.json().catch(() => null);
+    const err = new Error(errorMessage(resp.status, body, resp.statusText));
+    err.status = resp.status;
+    throw err;
+  },
+
   async json(resp) {
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(err.error || resp.statusText);
-    }
+    if (!resp.ok) await this.fail(resp);
     return resp.json();
   },
 
   async ensureOk(resp) {
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(err.error || err.message || resp.statusText);
-    }
+    if (!resp.ok) await this.fail(resp);
     return resp;
   },
 };
@@ -92,6 +98,7 @@ const NAV = [
   { href: '/servicos.html', label: 'Serviços' },
   { href: '/insumos.html',  label: 'Insumos'  },
   { href: '/nova-os.html',  label: 'Nova OS'  },
+  { href: '/bancada.html',  label: 'Bancada'  },
 ];
 
 function initLayout() {
@@ -179,8 +186,13 @@ Object.assign(window, {
   api, requireAuth, getUser, logout,
   NAV, initLayout, setPageTitle,
   showToast, showError, openModal, closeModal,
-  STATUS_META, STATUS_ORDER, STATUS_ACTIONS,
+  STATUS_META, STATUS_ORDER,
+  TICKET_STATUS_META, ITEM_STATUS_META, DECISION_META, QUOTE_STATUS_META,
+  PAYMENT_STATUS_META, SAGA_STATUS_META,
   parseJwt, escapeHtml, escapeAttr, formatCents, formatDate, statusBadge,
+  metaBadge, canEditItems, canDeliver, canRequestCancel, pendingQRCode, qrCodeFromUrl, qrImageUrl, qrCodeHtml,
+  approvalPageUrl, hasPendingDecision, isValidBranch, ticketActions, itemAction,
+  ticketActionPath, errorMessage,
 });
 
 export {
