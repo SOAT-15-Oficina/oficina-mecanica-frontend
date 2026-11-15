@@ -8,9 +8,10 @@
 <body class="bg-gray-100 min-h-screen">
   <div class="flex min-h-screen">
     <aside id="sidebar" class="w-56 bg-gray-900 text-white flex-shrink-0 flex flex-col"></aside>
-    <div class="flex-1 flex flex-col">
+    <div class="flex-1 flex flex-col min-w-0">
       <header id="header" class="bg-white shadow px-6 py-3 flex justify-between items-center"></header>
       <main class="flex-1 p-6">
+        <div id="action-msg" class="hidden mb-4 p-3 rounded-lg text-sm"></div>
         <div id="content">
           <div class="text-center py-12 text-gray-400">Carregando...</div>
         </div>
@@ -27,179 +28,252 @@
       if (!woId) { window.location.href = '/board.html'; }
 
       let currentWO = null;
+      let state = { history: [], saga: null, quote: null, ticket: null };
+
+      async function optional(path) {
+        const resp = await api.get(path);
+        if (resp.status === 404) return null;
+        return api.json(resp);
+      }
 
       async function loadWO() {
         try {
-          const resp = await api.get('/work-orders/' + woId);
+          const resp = await api.get('/work-orders/' + encodeURIComponent(woId));
           currentWO = await api.json(resp);
+          const [history, saga, quote, ticket] = await Promise.all([
+            optional(`/work-orders/${encodeURIComponent(woId)}/history`).catch(() => []),
+            optional(`/work-orders/${encodeURIComponent(woId)}/saga`).catch(() => null),
+            optional(`/billing/quotes/by-work-order/${encodeURIComponent(woId)}`).catch(() => null),
+            optional(`/execution/tickets/${encodeURIComponent(woId)}`).catch(() => null),
+          ]);
+          state = { history: history || [], saga, quote, ticket };
           render();
         } catch (e) { showError(e.message); }
+      }
+
+      function showActionMsg(msg, cls) {
+        const el = document.getElementById('action-msg');
+        el.textContent = msg;
+        el.className = `mb-4 p-3 rounded-lg text-sm ${cls}`;
+      }
+
+      function field(label, value, sub) {
+        return `<div><span class="text-gray-500">${escapeHtml(label)}</span>
+          <p class="font-medium">${escapeHtml(value || '—')}</p>
+          ${sub ? `<p class="text-xs text-gray-400">${escapeHtml(sub)}</p>` : ''}</div>`;
+      }
+
+      function card(title, body, extra) {
+        return `<div class="bg-white rounded-xl shadow p-6 mb-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold">${escapeHtml(title)}</h3>${extra || ''}
+          </div>${body}</div>`;
+      }
+
+      function linkBox(label, url, cls) {
+        return `<div class="mt-4 p-3 rounded-lg text-sm ${cls}">
+          <span class="font-medium">${escapeHtml(label)}</span>
+          <a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="hover:underline break-all ml-1">${escapeHtml(url)}</a>
+        </div>`;
       }
 
       function render() {
         const wo = currentWO;
         setPageTitle('OS ' + wo.code);
+        const { saga, quote } = state;
 
-        const action = STATUS_ACTIONS[wo.status];
-        const actionBtn = action
-          ? `<button onclick="transitionStatus('${action.next}')" class="${action.cls} text-white px-4 py-2 rounded-lg text-sm font-medium">${action.label}</button>`
-          : '';
+        const buttons = [
+          canDeliver(wo.status) ? `<button onclick="deliverWO()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium">Registrar entrega</button>` : '',
+          canRequestCancel(wo.status, saga?.status) ? `<button onclick="cancelWO()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium">Cancelar OS</button>` : '',
+        ].join('');
 
-        const canAddServices = wo.status === 'RECEBIDA' || wo.status === 'EM_DIAGNOSTICO';
-
-        const publicUrl = `${window.location.origin}/aprovacao.html?code=${wo.code}&document=${wo.customer?.document || ''}&woId=${wo.id}`;
+        const qr = pendingQRCode(quote) || (wo.status === 'AGUARDANDO_PAGAMENTO' ? qrCodeFromUrl(wo.payment_url) : null);
+        const approvalUrl = quote ? approvalPageUrl(window.location.origin, {
+          quoteId: quote.id, code: wo.code, document: wo.customer?.document,
+        }) : '';
+        const vehicle = wo.vehicle ? `${wo.vehicle.brand} ${wo.vehicle.model}` : '';
+        const dates = [
+          ['Orçamento', wo.quote_sent_at], ['Aprovada', wo.approved_at], ['Iniciada', wo.started_at],
+          ['Finalizada', wo.finished_at], ['Entregue', wo.delivered_at],
+        ].filter(([, d]) => d).map(([l, d]) => `<span>${l}: ${escapeHtml(formatDate(d))}</span>`).join('');
 
         document.getElementById('content').innerHTML = `
-          <!-- Header -->
           <div class="bg-white rounded-xl shadow p-6 mb-6">
-            <div class="flex items-start justify-between">
+            <div class="flex items-start justify-between gap-4">
               <div>
                 <div class="flex items-center gap-3 mb-2">
-                  <h2 class="text-xl font-bold">${wo.code}</h2>
+                  <h2 class="text-xl font-bold">${escapeHtml(wo.code)}</h2>
                   ${statusBadge(wo.status)}
+                  ${wo.branch ? `<span class="text-xs text-gray-500">Filial ${escapeHtml(wo.branch)}</span>` : ''}
                 </div>
-                <p class="text-gray-700 font-medium">${wo.title}</p>
-                ${wo.description ? `<p class="text-gray-500 text-sm mt-1">${wo.description}</p>` : ''}
+                <p class="text-gray-700 font-medium">${escapeHtml(wo.title)}</p>
+                ${wo.description ? `<p class="text-gray-500 text-sm mt-1">${escapeHtml(wo.description)}</p>` : ''}
               </div>
               <div class="flex items-center gap-2">
-                ${actionBtn}
+                ${buttons}
                 <a href="/board.html" class="bg-gray-200 hover:bg-gray-300 px-4 py-2 rounded-lg text-sm">Voltar</a>
               </div>
             </div>
-
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5 pt-5 border-t text-sm">
-              <div>
-                <span class="text-gray-500">Cliente</span>
-                <p class="font-medium">${wo.customer?.name || '—'}</p>
-                <p class="text-xs text-gray-400">${wo.customer?.document || ''}</p>
-              </div>
-              <div>
-                <span class="text-gray-500">Veículo</span>
-                <p class="font-medium">${wo.vehicle ? wo.vehicle.brand + ' ' + wo.vehicle.model : '—'}</p>
-                <p class="text-xs text-gray-400">${wo.vehicle?.license_plate || ''}</p>
-              </div>
-              <div>
-                <span class="text-gray-500">Total estimado</span>
-                <p class="font-medium">${formatCents(wo.total_estimated_price_cents)}</p>
-              </div>
-              <div>
-                <span class="text-gray-500">Recebida em</span>
-                <p class="font-medium">${formatDate(wo.received_at)}</p>
-              </div>
+            <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mt-5 pt-5 border-t border-gray-200 text-sm">
+              ${field('Cliente', wo.customer?.name, wo.customer?.document)}
+              ${field('Veículo', vehicle, wo.vehicle?.license_plate)}
+              ${field('Total estimado', formatCents(wo.total_estimated_price_cents || 0))}
+              ${field('Total aprovado', wo.approved_total_cents != null ? formatCents(wo.approved_total_cents) : '')}
+              ${field('Recebida em', formatDate(wo.received_at))}
             </div>
-
-            <!-- Timestamps -->
-            <div class="flex flex-wrap gap-4 mt-4 text-xs text-gray-500">
-              ${wo.quote_sent_at ? `<span>Orçamento: ${formatDate(wo.quote_sent_at)}</span>` : ''}
-              ${wo.approved_at ? `<span>Aprovada: ${formatDate(wo.approved_at)}</span>` : ''}
-              ${wo.started_at ? `<span>Iniciada: ${formatDate(wo.started_at)}</span>` : ''}
-              ${wo.finished_at ? `<span>Finalizada: ${formatDate(wo.finished_at)}</span>` : ''}
-              ${wo.delivered_at ? `<span>Entregue: ${formatDate(wo.delivered_at)}</span>` : ''}
-            </div>
-
-            ${wo.status === 'AGUARDANDO_APROVACAO' ? `
-            <div class="mt-4 p-3 bg-blue-50 rounded-lg text-sm">
-              <span class="text-blue-700 font-medium">Link público para o cliente:</span>
-              <a href="${publicUrl}" target="_blank" class="text-blue-600 hover:underline break-all ml-1">${publicUrl}</a>
-            </div>` : ''}
+            <div class="flex flex-wrap gap-4 mt-4 text-xs text-gray-500">${dates}</div>
+            ${qr ? `<div class="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-700"><p class="font-medium text-sm mb-2">Pagamento por QR Code</p>${qrCodeHtml(qr)}</div>` : ''}
+            ${hasPendingDecision(quote) ? linkBox('Link público de aprovação para o cliente:', approvalUrl, 'bg-blue-50 text-blue-700') : ''}
           </div>
 
-          <!-- Services -->
-          <div class="bg-white rounded-xl shadow p-6 mb-6">
-            <div class="flex items-center justify-between mb-4">
-              <h3 class="text-lg font-semibold">Serviços</h3>
-              ${canAddServices ? `<button onclick="openAddServiceModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm">Adicionar serviço</button>` : ''}
-            </div>
-            <div id="services-list" class="space-y-3">
-              ${renderServices(wo.services || [])}
-            </div>
-            ${(wo.services || []).length === 0 ? '<p class="text-gray-400 text-sm">Nenhum serviço adicionado</p>' : ''}
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>${card('Saga', renderSaga(saga))}</div>
+            <div>${card('Histórico de status', renderHistory(state.history))}</div>
           </div>
+          ${card('Orçamento (Billing)', renderQuote(quote))}
+          ${card('Bancada (Execution)', renderTicket(state.ticket),
+            `<a href="/bancada.html?wo=${encodeURIComponent(wo.id)}" class="text-blue-600 hover:underline text-sm">Abrir na bancada</a>`)}
+          ${card('Serviços', renderServices(wo.services || []),
+            canEditItems(wo.status, saga?.status) ? `<button onclick="openAddServiceModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm">Adicionar serviço</button>` : '')}
         `;
       }
 
-      function svcStatusBadge(status) {
-        const map = {
-          PENDENTE: { cls: 'bg-gray-100 text-gray-600', label: 'Pendente' },
-          EM_EXECUCAO: { cls: 'bg-purple-100 text-purple-700', label: 'Em execução' },
-          FINALIZADO: { cls: 'bg-green-100 text-green-700', label: 'Finalizado' },
-        };
-        const meta = map[status] || { cls: 'bg-gray-100 text-gray-600', label: status };
-        return `<span class="inline-block px-2 py-0.5 text-xs rounded-full ${meta.cls}">${meta.label}</span>`;
+      function renderSaga(saga) {
+        if (!saga) return '<p class="text-gray-400 text-sm">Saga não encontrada</p>';
+        const pending = saga.pending_compensations || [];
+        const rows = [
+          ['Situação', metaBadge(SAGA_STATUS_META, saga.status)],
+          ['Passo atual', `<span class="font-mono">${escapeHtml(saga.current_step || '—')}</span>`],
+          ['Passos concluídos', escapeHtml((saga.completed_steps || []).join(', ') || '—')],
+          ['Compensações pendentes', pending.length ? escapeHtml(pending.join(', ')) : 'nenhuma'],
+          ['Prazo', escapeHtml(formatDate(saga.deadline_at) || '—')],
+          ['Tentativas', escapeHtml(saga.attempts ?? 0)],
+        ];
+        if (saga.failure_reason) rows.push(['Motivo da falha', `<span class="text-red-600 font-medium">${escapeHtml(saga.failure_reason)}</span>`]);
+        return `<dl class="grid grid-cols-3 gap-y-2 text-sm">${rows.map(([k, v]) =>
+          `<dt class="text-gray-500">${k}</dt><dd class="col-span-2">${v}</dd>`).join('')}</dl>`;
+      }
+
+      function renderHistory(history) {
+        if (!history.length) return '<p class="text-gray-400 text-sm">Sem transições registradas</p>';
+        return `<ol class="space-y-2 text-sm">${history.map(h => `
+          <li class="flex flex-wrap items-center gap-2">
+            <span class="text-xs text-gray-400 w-28">${escapeHtml(formatDate(h.changed_at))}</span>
+            ${h.from ? statusBadge(h.from) + '<span class="text-gray-400">→</span>' : ''}${statusBadge(h.to)}
+            <span class="text-xs text-gray-500 font-mono">${escapeHtml(h.cause || '')}</span>
+          </li>`).join('')}</ol>`;
+      }
+
+      function renderQuote(quote) {
+        if (!quote) return '<p class="text-gray-400 text-sm">Orçamento ainda não gerado</p>';
+        const items = (quote.items || []).map(i => `
+          <tr class="border-t border-gray-200">
+            <td class="py-2">${escapeHtml(i.title)}</td>
+            <td class="py-2">${formatCents(i.price_cents || 0)}</td>
+            <td class="py-2">${metaBadge(DECISION_META, i.decision)}</td>
+            <td class="py-2 text-xs text-gray-500">${escapeHtml(formatDate(i.decided_at))}</td>
+          </tr>`).join('');
+        const payments = (quote.payments || []).map(p => `
+          <tr class="border-t border-gray-200">
+            <td class="py-2">${metaBadge(PAYMENT_STATUS_META, p.status)}</td>
+            <td class="py-2">${formatCents(p.amount_cents || 0)}</td>
+            <td class="py-2 text-xs text-gray-500">${escapeHtml(p.failure_reason || '')}</td>
+            <td class="py-2 text-xs text-gray-500">${escapeHtml(formatDate(p.confirmed_at || p.refunded_at || p.created_at))}</td>
+          </tr>`).join('');
+        return `
+          <div class="flex flex-wrap items-center gap-4 text-sm mb-4">
+            ${metaBadge(QUOTE_STATUS_META, quote.status)}
+            <span>Total: <strong>${formatCents(quote.total_cents || 0)}</strong></span>
+            <span>Aprovado: <strong>${formatCents(quote.approved_total_cents || 0)}</strong></span>
+            ${quote.sent_at ? `<span class="text-xs text-gray-500">Enviado em ${escapeHtml(formatDate(quote.sent_at))}</span>` : ''}
+            ${quote.supply_shortage ? '<span class="text-xs text-orange-600 font-medium">Falta de insumo no estoque</span>' : ''}
+          </div>
+          <table class="w-full text-sm"><thead><tr class="text-left text-gray-500">
+            <th class="pb-1">Item</th><th class="pb-1">Valor</th><th class="pb-1">Decisão</th><th class="pb-1">Em</th>
+          </tr></thead><tbody>${items}</tbody></table>
+          <h4 class="font-medium mt-5 mb-1 text-sm">Pagamentos</h4>
+          ${payments ? `<table class="w-full text-sm"><tbody>${payments}</tbody></table>` : '<p class="text-gray-400 text-sm">Nenhum pagamento</p>'}`;
+      }
+
+      function renderTicket(ticket) {
+        if (!ticket) return '<p class="text-gray-400 text-sm">Ficha ainda não aberta na bancada</p>';
+        const items = (ticket.items || []).map(i => `
+          <li class="flex items-center justify-between text-sm">
+            <span>${escapeHtml(i.title)}</span>
+            <span class="flex items-center gap-2 text-xs text-gray-500">
+              ${escapeHtml(formatDate(i.finished_at || i.started_at))}${metaBadge(ITEM_STATUS_META, i.status)}
+            </span>
+          </li>`).join('');
+        return `
+          <div class="flex flex-wrap items-center gap-4 text-sm mb-3">
+            ${metaBadge(TICKET_STATUS_META, ticket.status)}
+            <span>Fase: ${escapeHtml(ticket.phase)}</span>
+            <span>Filial: ${escapeHtml(ticket.branch)}</span>
+            ${ticket.diagnosis_technician ? `<span>Diagnóstico: ${escapeHtml(ticket.diagnosis_technician)}</span>` : ''}
+            ${ticket.repair_technician ? `<span>Reparo: ${escapeHtml(ticket.repair_technician)}</span>` : ''}
+          </div>
+          ${ticket.diagnosis_notes ? `<p class="text-sm text-gray-600 mb-3">Notas: ${escapeHtml(ticket.diagnosis_notes)}</p>` : ''}
+          ${ticket.cancel_reason ? `<p class="text-sm text-red-600 mb-3">Cancelada: ${escapeHtml(ticket.cancel_reason)}</p>` : ''}
+          ${items ? `<ul class="space-y-1">${items}</ul>` : '<p class="text-gray-400 text-sm">Sem itens enfileirados</p>'}`;
       }
 
       function renderServices(services) {
-        return services.map(s => {
-          const canAddSupply = currentWO.status === 'RECEBIDA' || currentWO.status === 'EM_DIAGNOSTICO';
-          const canRemove = currentWO.status !== 'FINALIZADA' && currentWO.status !== 'ENTREGUE' && currentWO.status !== 'CANCELADA';
-          const canStart = currentWO.status === 'EM_EXECUCAO' && s.status === 'PENDENTE' && s.approval_status === 'APROVADO';
-          const canFinalize = currentWO.status === 'EM_EXECUCAO' && s.status === 'EM_EXECUCAO' && s.approval_status === 'APROVADO';
-          const approvalLabel = { APROVADO: 'Aprovado', REPROVADO: 'Reprovado', PENDENTE: 'Pendente' }[s.approval_status] || s.approval_status;
-          return `
-            <div class="border border-gray-200 rounded-lg p-4">
-              <div class="flex items-center justify-between">
-                <div>
-                  <span class="font-medium">${s.description || s.service_title_snapshot || '—'}</span>
-                  <span class="ml-2 text-gray-500 text-sm">${formatCents(s.service_price_cents_snapshot)}</span>
-                  <span class="ml-2 inline-block px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-700">${approvalLabel}</span>
-                  ${svcStatusBadge(s.status)}
-                </div>
-                <div class="flex items-center gap-2">
-                  ${canStart ? `<button onclick="startService('${s.id}')" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded text-xs font-medium">Iniciar</button>` : ''}
-                  ${canFinalize ? `<button onclick="finalizeService('${s.id}')" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-xs font-medium">Finalizar</button>` : ''}
-                  ${canAddSupply ? `<button onclick="openAddSupplyModal('${s.id}')" class="text-blue-600 hover:underline text-xs">+ Insumo</button>` : ''}
-                  ${canRemove ? `<button onclick="removeService('${s.id}')" class="text-red-500 hover:underline text-xs">Remover</button>` : ''}
-                </div>
+        if (!services.length) return '<p class="text-gray-400 text-sm">Nenhum serviço adicionado</p>';
+        const editable = canEditItems(currentWO.status, state.saga?.status);
+        return `<div class="space-y-3">${services.map(s => `
+          <div class="border border-gray-200 rounded-lg p-4">
+            <div class="flex items-center justify-between">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-medium">${escapeHtml(s.description || s.service_title_snapshot || '—')}</span>
+                <span class="text-gray-500 text-sm">${formatCents(s.service_price_cents_snapshot || 0)}</span>
+                ${metaBadge(DECISION_META, s.approval_status)}
+                ${metaBadge(ITEM_STATUS_META, s.status)}
               </div>
-              ${(s.supplies || []).length > 0 ? `
-                <div class="mt-2 ml-4 space-y-1">
-                  ${s.supplies.map(sup => `
-                    <div class="flex items-center justify-between text-sm text-gray-600">
-                      <span>${sup.description || sup.supply_title_snapshot || '—'} x${sup.supply_quantity}</span>
-                      <div class="flex items-center gap-2">
-                        <span>${formatCents(sup.supply_price_cents_snapshot * sup.supply_quantity)}</span>
-                        ${canRemove ? `<button onclick="removeSupply('${s.id}','${sup.id}')" class="text-red-400 hover:text-red-600 text-xs">x</button>` : ''}
-                      </div>
-                    </div>`).join('')}
-                </div>` : ''}
-            </div>`;
-        }).join('');
+              ${editable ? `<div class="flex items-center gap-2">
+                <button onclick="openAddSupplyModal('${escapeAttr(s.id)}')" class="text-blue-600 hover:underline text-xs">+ Insumo</button>
+                <button onclick="removeService('${escapeAttr(s.id)}')" class="text-red-500 hover:underline text-xs">Remover</button>
+              </div>` : ''}
+            </div>
+            ${(s.supplies || []).length ? `<div class="mt-2 ml-4 space-y-1">${s.supplies.map(sup => `
+              <div class="flex items-center justify-between text-sm text-gray-600">
+                <span>${escapeHtml(sup.description || sup.supply_title_snapshot || '—')} x${escapeHtml(sup.supply_quantity)}</span>
+                <div class="flex items-center gap-2">
+                  <span>${formatCents((sup.supply_price_cents_snapshot || 0) * (sup.supply_quantity || 0))}</span>
+                  ${editable ? `<button onclick="removeSupply('${escapeAttr(s.id)}','${escapeAttr(sup.id)}')" class="text-red-400 hover:text-red-600 text-xs">x</button>` : ''}
+                </div>
+              </div>`).join('')}</div>` : ''}
+          </div>`).join('')}</div>`;
       }
 
-      async function startService(wosId) {
+      async function deliverWO() {
+        if (!confirm('Registrar a entrega do veículo?')) return;
         try {
-          const resp = await api.put(`/work-orders/${woId}/services/${wosId}/start`, {});
-          await api.json(resp);
-          showToast('Serviço iniciado');
+          await api.json(await api.post(`/work-orders/${encodeURIComponent(woId)}/deliver`));
+          showToast('Entrega registrada');
           loadWO();
         } catch (e) { showError(e.message); }
       }
 
-      async function finalizeService(wosId) {
+      async function cancelWO() {
+        if (!confirm('Cancelar esta OS? Os passos já feitos serão compensados.')) return;
         try {
-          const resp = await api.put(`/work-orders/${woId}/services/${wosId}/finalize`, {});
-          await api.json(resp);
-          showToast('Serviço finalizado');
+          await api.json(await api.post(`/work-orders/${encodeURIComponent(woId)}/cancel`));
+          showActionMsg('Cancelamento solicitado. A OS vira Cancelada quando todas as compensações forem confirmadas.', 'bg-yellow-50 text-yellow-800');
           loadWO();
-        } catch (e) { showError(e.message); }
-      }
-
-      async function transitionStatus(newStatus) {
-        try {
-          const resp = await api.put('/work-orders/' + woId, { status: newStatus });
-          await api.json(resp);
-          showToast('Status atualizado');
-          loadWO();
-        } catch (e) { showError(e.message); }
+        } catch (e) {
+          if (e.status === 409) {
+            showActionMsg('Esta OS não pode mais ser cancelada: ' + e.message, 'bg-red-50 text-red-700');
+          } else {
+            showError(e.message);
+          }
+        }
       }
 
       async function openAddServiceModal() {
         try {
-          const resp = await api.get('/services?active=true&limit=100');
-          const data = await api.json(resp);
-          const list = data.data || [];
-          const opts = list.map(s =>
-            `<option value="${s.id}">${s.title} — ${formatCents(s.price_cents)} (${s.estimated_time_minutes} min)</option>`
+          const data = await api.json(await api.get('/services?active=true&limit=100'));
+          const opts = (data.data || []).map(s =>
+            `<option value="${escapeAttr(s.id)}">${escapeHtml(s.title)} — ${formatCents(s.price_cents)} (${escapeHtml(s.estimated_time_minutes)} min)</option>`
           ).join('');
           openModal('Adicionar serviço', `
             <div class="space-y-4">
@@ -218,8 +292,7 @@
         const serviceId = document.getElementById('m-service').value;
         if (!serviceId) { showError('Selecione um serviço'); return; }
         try {
-          const resp = await api.post(`/work-orders/${woId}/services`, [{ service_id: serviceId }]);
-          await api.json(resp);
+          await api.json(await api.post(`/work-orders/${encodeURIComponent(woId)}/services`, [{ service_id: serviceId }]));
           closeModal(); showToast('Serviço adicionado'); loadWO();
         } catch (e) { showError(e.message); }
       }
@@ -227,19 +300,16 @@
       async function removeService(wosId) {
         if (!confirm('Remover este serviço?')) return;
         try {
-          const resp = await api.del(`/work-orders/${woId}/services/${wosId}`);
-          if (!resp.ok && resp.status !== 204) { const e = await resp.json(); throw new Error(e.error); }
+          await api.ensureOk(await api.del(`/work-orders/${encodeURIComponent(woId)}/services/${encodeURIComponent(wosId)}`));
           showToast('Serviço removido'); loadWO();
         } catch (e) { showError(e.message); }
       }
 
       async function openAddSupplyModal(wosId) {
         try {
-          const resp = await api.get('/supplies');
-          const data = await api.json(resp);
-          const list = data.data || [];
-          const opts = list.map(s =>
-            `<option value="${s.id}">${s.title} — ${formatCents(s.price_cents)} (estoque: ${s.stock_quantity})</option>`
+          const data = await api.json(await api.get('/supplies'));
+          const opts = (data.data || []).map(s =>
+            `<option value="${escapeAttr(s.id)}">${escapeHtml(s.title)} — ${formatCents(s.price_cents)} (estoque: ${escapeHtml(s.stock_quantity)})</option>`
           ).join('');
           openModal('Adicionar Insumo', `
             <div class="space-y-4">
@@ -253,34 +323,31 @@
                 <label class="block text-sm font-medium text-gray-700 mb-1">Quantidade</label>
                 <input id="m-qty" type="number" value="1" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
               </div>
-              <button onclick="addSupply('${wosId}')" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm">Adicionar</button>
+              <button onclick="addSupply('${escapeAttr(wosId)}')" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm">Adicionar</button>
             </div>`);
         } catch (e) { showError(e.message); }
       }
 
       async function addSupply(wosId) {
         const supplyId = document.getElementById('m-supply').value;
-        const qty = parseInt(document.getElementById('m-qty').value);
-        if (!supplyId || !qty) { showError('Selecione o insumo e a quantidade'); return; }
+        const qty = parseInt(document.getElementById('m-qty').value, 10);
+        if (!supplyId || !qty || qty < 1) { showError('Selecione o insumo e a quantidade'); return; }
         try {
-          const resp = await api.post(`/work-orders/${woId}/services/${wosId}/supplies`, [{ supply_id: supplyId, quantity: qty }]);
-          await api.json(resp);
+          await api.json(await api.post(`/work-orders/${encodeURIComponent(woId)}/services/${encodeURIComponent(wosId)}/supplies`, [{ supply_id: supplyId, quantity: qty }]));
           closeModal(); showToast('Insumo adicionado'); loadWO();
         } catch (e) { showError(e.message); }
       }
 
       async function removeSupply(wosId, supplyId) {
         try {
-          const resp = await api.del(`/work-orders/${woId}/services/${wosId}/supplies/${supplyId}`);
-          if (!resp.ok && resp.status !== 204) { const e = await resp.json(); throw new Error(e.error); }
+          await api.ensureOk(await api.del(`/work-orders/${encodeURIComponent(woId)}/services/${encodeURIComponent(wosId)}/supplies/${encodeURIComponent(supplyId)}`));
           showToast('Insumo removido'); loadWO();
         } catch (e) { showError(e.message); }
       }
 
       loadWO();
 
-    // Handlers inline (onclick=) resolvem no escopo global.
-    Object.assign(window, { addService, addSupply, finalizeService, loadWO, openAddServiceModal, openAddSupplyModal, removeService, removeSupply, render, renderServices, startService, svcStatusBadge, transitionStatus });
+    Object.assign(window, { addService, addSupply, cancelWO, deliverWO, loadWO, openAddServiceModal, openAddSupplyModal, removeService, removeSupply });
   });
   </script>
 </body>

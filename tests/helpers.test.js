@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseJwt, escapeHtml, escapeAttr, formatCents, formatDate, statusBadge,
-  STATUS_META, STATUS_ORDER, STATUS_ACTIONS,
+  STATUS_META, STATUS_ORDER,
 } from '../shared/helpers.js';
 
 // escapeHtml e escapeAttr sao a UNICA defesa contra XSS do painel: todo dado
@@ -132,10 +132,15 @@ describe('tabelas de status', () => {
     expect(STATUS_ORDER).not.toContain('CANCELADA');
   });
 
-  it('toda transicao aponta para um status conhecido', () => {
-    for (const [from, action] of Object.entries(STATUS_ACTIONS)) {
-      expect(STATUS_META[from], `origem ${from} desconhecida`).toBeDefined();
-      expect(STATUS_META[action.next], `destino ${action.next} desconhecido`).toBeDefined();
-    }
+  it('AGUARDANDO_PAGAMENTO fica entre a aprovacao e o APROVADO', () => {
+    expect(STATUS_META.AGUARDANDO_PAGAMENTO.label).toBe('Aguardando pagamento');
+    const i = STATUS_ORDER.indexOf('AGUARDANDO_PAGAMENTO');
+    expect(STATUS_ORDER[i - 1]).toBe('AGUARDANDO_APROVACAO');
+    expect(STATUS_ORDER[i + 1]).toBe('APROVADO');
+  });
+
+  it('cada status tem cor propria', () => {
+    const bgs = Object.values(STATUS_META).map(m => m.bg);
+    expect(new Set(bgs).size).toBe(bgs.length);
   });
 });

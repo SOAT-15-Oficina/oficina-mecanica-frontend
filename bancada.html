@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oficina - Bancada</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="stylesheet" href="/shared/style.css">
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="flex min-h-screen">
+    <aside id="sidebar" class="w-56 bg-gray-900 text-white flex-shrink-0 flex flex-col"></aside>
+    <div class="flex-1 flex flex-col min-w-0">
+      <header id="header" class="bg-white shadow px-6 py-3 flex justify-between items-center"></header>
+      <main class="flex-1 p-6">
+        <div class="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap items-end gap-4">
+          <div>
+            <label for="branch" class="block text-xs font-medium text-gray-600 mb-1">Filial</label>
+            <input id="branch" type="text" maxlength="40" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-40">
+          </div>
+          <div>
+            <label for="technician" class="block text-xs font-medium text-gray-600 mb-1">Técnico</label>
+            <input id="technician" type="text" maxlength="120" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-48">
+          </div>
+          <button onclick="loadAll()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium">Atualizar</button>
+          <div id="bay" class="ml-auto flex items-center gap-3 text-sm"></div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+          <section class="bg-white rounded-xl shadow p-4">
+            <h3 class="font-semibold mb-3">Fila de diagnóstico</h3>
+            <div id="queue-DIAGNOSTICO" class="space-y-2"></div>
+          </section>
+          <section class="bg-white rounded-xl shadow p-4">
+            <h3 class="font-semibold mb-3">Fila de reparo</h3>
+            <div id="queue-REPARO" class="space-y-2"></div>
+          </section>
+          <section class="bg-white rounded-xl shadow p-4">
+            <h3 class="font-semibold mb-3">Em andamento</h3>
+            <div id="in-progress" class="space-y-2"></div>
+          </section>
+        </div>
+
+        <div id="ticket"></div>
+      </main>
+    </div>
+  </div>
+
+  <script type="module" src="/shared/app.js"></script>
+  <script>
+  window.addEventListener("DOMContentLoaded", () => {
+      initLayout();
+      setPageTitle('Bancada');
+
+      const params = new URLSearchParams(window.location.search);
+      const branchInput = document.getElementById('branch');
+      const techInput = document.getElementById('technician');
+      let selected = params.get('wo') || '';
+      let bay = null;
+
+      function stored(key, fallback) {
+        try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
+      }
+      function store(key, value) {
+        try { localStorage.setItem(key, value); } catch { return; }
+      }
+
+      branchInput.value = params.get('branch') || stored('bancada.branch', 'MATRIZ');
+      techInput.value = stored('bancada.technician', getUser()?.user || '');
+
+      function currentBranch() {
+        const branch = branchInput.value.trim().toUpperCase();
+        if (!isValidBranch(branch)) throw new Error('Filial inválida: use letras, números, _ ou - (até 40)');
+        branchInput.value = branch;
+        store('bancada.branch', branch);
+        return branch;
+      }
+
+      function entryCard(e, extra) {
+        const vehicle = e.vehicle ? `${e.vehicle.brand || ''} ${e.vehicle.model || ''} · ${e.vehicle.license_plate || ''}` : '';
+        const active = e.work_order_id === selected ? 'border-blue-500 ring-1 ring-blue-500' : 'border-gray-200';
+        return `<button onclick="selectTicket('${escapeAttr(e.work_order_id)}')" class="wo-card block w-full text-left bg-white rounded-lg p-3 border ${active}">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs font-mono text-gray-500">${extra || ''}${escapeHtml(e.work_order_code || '')}</span>
+            ${e.status ? metaBadge(TICKET_STATUS_META, e.status) : ''}
+          </div>
+          <p class="text-sm font-medium text-gray-800 truncate">${escapeHtml(e.title || '')}</p>
+          <p class="text-xs text-gray-400 truncate">${escapeHtml(vehicle)}</p>
+          ${e.enqueued_at ? `<p class="text-xs text-gray-400">Na fila desde ${escapeHtml(formatDate(e.enqueued_at))}</p>` : ''}
+        </button>`;
+      }
+
+      function emptyMsg(text) { return `<p class="text-sm text-gray-400">${escapeHtml(text)}</p>`; }
+
+      async function loadQueue(branch, phase) {
+        const el = document.getElementById('queue-' + phase);
+        try {
+          const q = await api.json(await api.get(`/execution/queue?branch=${encodeURIComponent(branch)}&phase=${phase}`));
+          const entries = q.entries || [];
+          el.innerHTML = entries.length ? entries.map(e => entryCard(e, `#${escapeHtml(e.position)} `)).join('') : emptyMsg('Fila vazia');
+        } catch (e) { el.innerHTML = emptyMsg('Erro: ' + e.message); }
+      }
+
+      async function loadInProgress(branch) {
+        const el = document.getElementById('in-progress');
+        try {
+          const lists = await Promise.all(['EM_DIAGNOSTICO', 'EM_EXECUCAO'].map(async s =>
+            (await api.json(await api.get(`/work-orders?status=${s}&limit=100`))).data || []));
+          const orders = lists.flat().filter(wo => !wo.branch || wo.branch === branch);
+          el.innerHTML = orders.length ? orders.map(wo => entryCard({
+            work_order_id: wo.id, work_order_code: wo.code, title: wo.title,
+            vehicle: wo.vehicle, status: wo.status === 'EM_DIAGNOSTICO' ? 'EM_DIAGNOSTICO' : 'EM_REPARO',
+          })).join('') : emptyMsg('Nenhuma OS em andamento');
+        } catch (e) { el.innerHTML = emptyMsg('Erro: ' + e.message); }
+      }
+
+      async function loadBay(branch) {
+        const el = document.getElementById('bay');
+        try {
+          bay = await api.json(await api.get('/execution/bays/' + encodeURIComponent(branch)));
+          const badge = bay.available
+            ? '<span class="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">Bancada disponível</span>'
+            : '<span class="px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">Bancada indisponível</span>';
+          const who = bay.updated_by ? `por ${escapeHtml(bay.updated_by)} em ${escapeHtml(formatDate(bay.updated_at))}` : '';
+          el.innerHTML = `${badge}<span class="text-xs text-gray-500">${who}</span>
+            <button onclick="toggleBay()" class="bg-gray-200 hover:bg-gray-300 px-3 py-1.5 rounded-lg text-sm">
+              ${bay.available ? 'Marcar indisponível' : 'Marcar disponível'}</button>`;
+        } catch (e) { el.innerHTML = emptyMsg('Erro: ' + e.message); }
+      }
+
+      async function toggleBay() {
+        if (!bay) return;
+        try {
+          const branch = currentBranch();
+          await api.json(await api.put(`/execution/bays/${encodeURIComponent(branch)}/availability`, { available: !bay.available }));
+          showToast(bay.available ? 'Bancada marcada como indisponível' : 'Bancada marcada como disponível');
+          loadBay(branch);
+        } catch (e) { showError(e.message); }
+      }
+
+      async function loadAll() {
+        let branch;
+        try { branch = currentBranch(); } catch (e) { showError(e.message); return; }
+        await Promise.all([loadBay(branch), loadQueue(branch, 'DIAGNOSTICO'), loadQueue(branch, 'REPARO'), loadInProgress(branch)]);
+        if (selected) loadTicket();
+      }
+
+      function selectTicket(id) {
+        selected = id;
+        loadAll();
+      }
+
+      async function loadTicket() {
+        const el = document.getElementById('ticket');
+        try {
+          const resp = await api.get('/execution/tickets/' + encodeURIComponent(selected));
+          if (resp.status === 404) { el.innerHTML = `<div class="bg-white rounded-xl shadow p-6">${emptyMsg('Ficha não encontrada na bancada')}</div>`; return; }
+          renderTicket(await api.json(resp));
+        } catch (e) { showError(e.message); }
+      }
+
+      function renderTicket(t) {
+        const actions = ticketActions(t).map(a => `
+          <div class="flex flex-wrap items-end gap-2">
+            ${a.needs === 'notes' ? `<textarea id="notes" maxlength="2000" rows="2" placeholder="Notas do diagnóstico" class="border border-gray-300 rounded-lg px-3 py-2 text-sm w-80"></textarea>` : ''}
+            <button onclick="runAction('${a.action}')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium">${escapeHtml(a.label)}</button>
+          </div>`).join('');
+        const items = (t.items || []).map(i => {
+          const act = itemAction(t, i);
+          return `<li class="flex items-center justify-between border-t border-gray-200 py-2 text-sm">
+            <span>${escapeHtml(i.title)} <span class="text-xs text-gray-400">${escapeHtml(i.estimated_time_minutes ?? '')} min</span></span>
+            <span class="flex items-center gap-2">${metaBadge(ITEM_STATUS_META, i.status)}
+              ${act ? `<button onclick="runItemAction('${escapeAttr(i.work_order_service_id)}','${act.action}')" class="bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded text-xs font-medium">${escapeHtml(act.label)}</button>` : ''}
+            </span></li>`;
+        }).join('');
+        const timeline = (t.timeline || []).slice().reverse().map(ev => `
+          <li class="text-xs text-gray-600"><span class="text-gray-400">${escapeHtml(formatDate(ev.at))}</span>
+            <span class="font-mono">${escapeHtml(ev.type)}</span>
+            ${ev.to ? '→ ' + escapeHtml(TICKET_STATUS_META[ev.to]?.label || ev.to) : ''}
+            ${ev.actor ? `· ${escapeHtml(ev.actor)}` : ''}${ev.detail ? ` · ${escapeHtml(ev.detail)}` : ''}</li>`).join('');
+
+        document.getElementById('ticket').innerHTML = `
+          <div class="bg-white rounded-xl shadow p-6">
+            <div class="flex flex-wrap items-start justify-between gap-4 mb-4">
+              <div>
+                <div class="flex items-center gap-3 mb-1">
+                  <h2 class="text-xl font-bold">${escapeHtml(t.work_order_code || '')}</h2>
+                  ${metaBadge(TICKET_STATUS_META, t.status)}
+                </div>
+                <p class="text-gray-700">${escapeHtml(t.title || '')}</p>
+                <p class="text-xs text-gray-500 mt-1">Filial ${escapeHtml(t.branch)} · fase ${escapeHtml(t.phase)}
+                  ${t.diagnosis_technician ? ' · diagnóstico: ' + escapeHtml(t.diagnosis_technician) : ''}
+                  ${t.repair_technician ? ' · reparo: ' + escapeHtml(t.repair_technician) : ''}</p>
+                ${t.diagnosis_notes ? `<p class="text-sm text-gray-600 mt-2">Notas: ${escapeHtml(t.diagnosis_notes)}</p>` : ''}
+                ${t.cancel_reason ? `<p class="text-sm text-red-600 mt-2">Cancelada: ${escapeHtml(t.cancel_reason)}</p>` : ''}
+              </div>
+              <div class="flex flex-col items-end gap-2">
+                ${actions}
+                <a href="/os.html?id=${encodeURIComponent(t.work_order_id)}" class="text-blue-600 hover:underline text-sm">Ver OS</a>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div><h3 class="font-semibold mb-2">Itens</h3>
+                ${items ? `<ul>${items}</ul>` : emptyMsg('Sem itens; chegam quando o reparo é enfileirado')}</div>
+              <div><h3 class="font-semibold mb-2">Linha do tempo</h3><ul class="space-y-1">${timeline}</ul></div>
+            </div>
+          </div>`;
+      }
+
+      async function post(path, body, msg) {
+        try {
+          await api.json(await api.post(path, body));
+          showToast(msg);
+          loadAll();
+        } catch (e) { showError(e.message); }
+      }
+
+      function runAction(action) {
+        let body;
+        if (action === 'diagnosis-complete') {
+          body = { notes: (document.getElementById('notes')?.value || '').trim() };
+        } else {
+          const technician = techInput.value.trim();
+          if (!technician) { showError('Informe o técnico'); return; }
+          store('bancada.technician', technician);
+          body = { technician };
+        }
+        post(ticketActionPath(selected, action), body, 'Ficha atualizada');
+      }
+
+      function runItemAction(itemId, action) {
+        post(ticketActionPath(selected, action, itemId), undefined, action === 'start' ? 'Item iniciado' : 'Item finalizado');
+      }
+
+      loadAll();
+
+    Object.assign(window, { loadAll, runAction, runItemAction, selectTicket, toggleBay });
+  });
+  </script>
+</body>
+</html>
