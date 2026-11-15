@@ -80,8 +80,8 @@
       const params = new URLSearchParams(window.location.search);
       const quoteId = params.get('quote') || '';
       let quote = null;
-      let quotePaymentUrl = '';
-      let woPaymentUrl = '';
+      let quoteQR = null;
+      let woQR = null;
       let polls = 0;
 
       document.getElementById('code').value = params.get('code') || '';
@@ -96,12 +96,12 @@
       }
 
       function renderPayment() {
-        const url = quotePaymentUrl || woPaymentUrl;
+        const qr = quoteQR || woQR;
         const el = document.getElementById('payment');
-        show('payment', !!url);
-        if (!url) return;
+        show('payment', !!qr);
+        if (!qr) return;
         el.innerHTML = `<p class="text-indigo-800 font-medium mb-3">Orçamento aprovado. Falta apenas o pagamento para liberarmos o serviço.</p>
-          <a href="${escapeAttr(url)}" target="_blank" rel="noopener" class="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-6 py-3 rounded-lg text-sm">Pagar agora</a>`;
+          <div class="text-indigo-800">${qrCodeHtml(qr)}</div>`;
       }
 
       function publicQuotePath(suffix) {
@@ -151,9 +151,9 @@
         const msg = messages[q.status];
         if (msg) showStatusMsg(msg[0], msg[1]); else show('status-message', false);
 
-        quotePaymentUrl = q.payment_url || '';
+        quoteQR = pendingQRCode(q) || qrCodeFromUrl(q.payment_url);
         renderPayment();
-        if (q.status === 'APROVADO' && !quotePaymentUrl && polls < 10) {
+        if (q.status === 'APROVADO' && !quoteQR && polls < 10) {
           polls++;
           setTimeout(refreshAll, 3000);
         }
@@ -214,7 +214,7 @@
           </div>`).join('');
         document.getElementById('wo-history').innerHTML = (d.history || []).map(h => `
           <li class="flex items-center gap-3"><span class="text-xs text-gray-400 w-28">${escapeHtml(formatDate(h.changed_at))}</span>${statusBadge(h.status)}</li>`).join('');
-        woPaymentUrl = d.payment_url || '';
+        woQR = d.status === 'AGUARDANDO_PAGAMENTO' ? qrCodeFromUrl(d.payment_url) : null;
         renderPayment();
       }
 

@@ -142,10 +142,35 @@ export function canRequestCancel(status, sagaStatus) {
   return !CLOSED_SAGA_STATUSES.has(sagaStatus);
 }
 
-export function pendingPaymentUrl(quote) {
+export function qrImageUrl(pageUrl) {
+  return pageUrl ? `${pageUrl}.png` : '';
+}
+
+export function qrCodeFromUrl(pageUrl, qrData = '') {
+  if (!pageUrl) return null;
+  return { pageUrl, imageUrl: qrImageUrl(pageUrl), qrData: qrData || '' };
+}
+
+export function pendingQRCode(quote) {
   const payments = quote?.payments || [];
-  const pending = payments.filter(p => p.status === 'PENDENTE' && p.checkout_url);
-  return pending.length ? pending[pending.length - 1].checkout_url : '';
+  const pending = payments.filter(p => p.status === 'PENDENTE' && p.qr_code_url);
+  if (!pending.length) return null;
+  const last = pending[pending.length - 1];
+  return qrCodeFromUrl(last.qr_code_url, last.qr_data);
+}
+
+export function qrCodeHtml(qr) {
+  if (!qr) return '';
+  const copy = qr.qrData ? `
+      <label class="block text-xs font-medium mt-3 mb-1">Pix copia e cola</label>
+      <textarea readonly rows="3" onclick="this.select()" class="w-full font-mono text-xs border border-gray-300 rounded p-2 bg-white">${escapeHtml(qr.qrData)}</textarea>` : '';
+  return `<div class="flex flex-col sm:flex-row items-start gap-4">
+      <img src="${escapeAttr(qr.imageUrl)}" alt="QR Code de pagamento do Mercado Pago" width="180" height="180" class="bg-white rounded border border-gray-200">
+      <div class="flex-1 min-w-0 w-full">
+        <p class="text-sm">Escaneie o QR Code com o app do Mercado Pago ou do banco.</p>${copy}
+        <a href="${escapeAttr(qr.pageUrl)}" target="_blank" rel="noopener" class="inline-block mt-3 text-sm font-medium hover:underline break-all">Abrir a página do QR Code</a>
+      </div>
+    </div>`;
 }
 
 export function approvalPageUrl(origin, { quoteId, code, document } = {}) {

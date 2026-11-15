@@ -7,7 +7,7 @@ import {
   TICKET_STATUS_META, ITEM_STATUS_META, DECISION_META, QUOTE_STATUS_META,
   PAYMENT_STATUS_META, SAGA_STATUS_META,
   parseJwt, escapeHtml, escapeAttr, formatCents, formatDate, statusBadge,
-  metaBadge, canEditItems, canDeliver, canRequestCancel, pendingPaymentUrl,
+  metaBadge, canEditItems, canDeliver, canRequestCancel, pendingQRCode, qrCodeFromUrl, qrImageUrl, qrCodeHtml,
   approvalPageUrl, hasPendingDecision, isValidBranch, ticketActions, itemAction,
   ticketActionPath, errorMessage,
 } from './helpers.js';
@@ -190,7 +190,7 @@ Object.assign(window, {
   TICKET_STATUS_META, ITEM_STATUS_META, DECISION_META, QUOTE_STATUS_META,
   PAYMENT_STATUS_META, SAGA_STATUS_META,
   parseJwt, escapeHtml, escapeAttr, formatCents, formatDate, statusBadge,
-  metaBadge, canEditItems, canDeliver, canRequestCancel, pendingPaymentUrl,
+  metaBadge, canEditItems, canDeliver, canRequestCancel, pendingQRCode, qrCodeFromUrl, qrImageUrl, qrCodeHtml,
   approvalPageUrl, hasPendingDecision, isValidBranch, ticketActions, itemAction,
   ticketActionPath, errorMessage,
 });

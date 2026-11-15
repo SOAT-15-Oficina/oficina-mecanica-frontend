@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TICKET_STATUS_META, ITEM_STATUS_META, DECISION_META, QUOTE_STATUS_META,
   PAYMENT_STATUS_META, SAGA_STATUS_META,
-  metaBadge, canEditItems, canDeliver, canRequestCancel, pendingPaymentUrl,
+  metaBadge, canEditItems, canDeliver, canRequestCancel, pendingQRCode, qrCodeFromUrl, qrImageUrl, qrCodeHtml,
   approvalPageUrl, hasPendingDecision, isValidBranch, ticketActions, itemAction,
   ticketActionPath, errorMessage,
 } from '../shared/helpers.js';
@@ -72,23 +72,53 @@ describe('regras de acao da OS', () => {
   });
 });
 
-describe('pendingPaymentUrl', () => {
-  it('devolve o checkout do pagamento pendente mais recente', () => {
+describe('pendingQRCode', () => {
+  it('devolve o QR do pagamento pendente mais recente', () => {
     const quote = { payments: [
-      { status: 'RECUSADO', checkout_url: 'http://a' },
-      { status: 'PENDENTE', checkout_url: 'http://b' },
-      { status: 'PENDENTE', checkout_url: 'http://c' },
+      { status: 'RECUSADO', qr_code_url: 'http://a/qr', qr_data: 'A' },
+      { status: 'PENDENTE', qr_code_url: 'http://b/qr', qr_data: 'B' },
+      { status: 'PENDENTE', qr_code_url: 'http://c/qr', qr_data: 'C' },
     ] };
-    expect(pendingPaymentUrl(quote)).toBe('http://c');
+    expect(pendingQRCode(quote)).toEqual({ pageUrl: 'http://c/qr', imageUrl: 'http://c/qr.png', qrData: 'C' });
+  });
+
+  it('aceita pagamento sem qr_data', () => {
+    const quote = { payments: [{ status: 'PENDENTE', qr_code_url: 'http://c/qr' }] };
+    expect(pendingQRCode(quote).qrData).toBe('');
   });
 
   it.each([
     ['sem orcamento', null],
     ['sem pagamentos', {}],
-    ['so pagamentos fechados', { payments: [{ status: 'APROVADO', checkout_url: 'http://a' }] }],
+    ['so pagamentos fechados', { payments: [{ status: 'APROVADO', qr_code_url: 'http://a/qr' }] }],
     ['pendente sem link', { payments: [{ status: 'PENDENTE' }] }],
-  ])('string vazia quando %s', (_, quote) => {
-    expect(pendingPaymentUrl(quote)).toBe('');
+  ])('null quando %s', (_, quote) => {
+    expect(pendingQRCode(quote)).toBeNull();
+  });
+});
+
+describe('qrCodeFromUrl e qrImageUrl', () => {
+  it('monta a imagem a partir da pagina', () => {
+    expect(qrImageUrl('http://x/billing/public/payments/1/qr')).toBe('http://x/billing/public/payments/1/qr.png');
+    expect(qrImageUrl('')).toBe('');
+    expect(qrCodeFromUrl('http://x/qr')).toEqual({ pageUrl: 'http://x/qr', imageUrl: 'http://x/qr.png', qrData: '' });
+    expect(qrCodeFromUrl('')).toBeNull();
+  });
+});
+
+describe('qrCodeHtml', () => {
+  it('mostra imagem, copia e cola e link escapados', () => {
+    const html = qrCodeHtml({ pageUrl: 'http://x/qr?a="1"', imageUrl: 'http://x/qr.png', qrData: '0002<b>' });
+    expect(html).toContain('src="http://x/qr.png"');
+    expect(html).toContain('href="http://x/qr?a=&quot;1&quot;"');
+    expect(html).toContain('copia e cola');
+    expect(html).toContain('0002&lt;b&gt;');
+    expect(html).not.toContain('<b>');
+  });
+
+  it('omite o copia e cola sem qr_data e devolve vazio sem QR', () => {
+    expect(qrCodeHtml(qrCodeFromUrl('http://x/qr'))).not.toContain('copia e cola');
+    expect(qrCodeHtml(null)).toBe('');
   });
 });
 

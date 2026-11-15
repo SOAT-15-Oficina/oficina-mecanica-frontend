@@ -87,7 +87,7 @@
           canRequestCancel(wo.status, saga?.status) ? `<button onclick="cancelWO()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium">Cancelar OS</button>` : '',
         ].join('');
 
-        const paymentUrl = pendingPaymentUrl(quote) || (wo.status === 'AGUARDANDO_PAGAMENTO' ? wo.payment_url : '');
+        const qr = pendingQRCode(quote) || (wo.status === 'AGUARDANDO_PAGAMENTO' ? qrCodeFromUrl(wo.payment_url) : null);
         const approvalUrl = quote ? approvalPageUrl(window.location.origin, {
           quoteId: quote.id, code: wo.code, document: wo.customer?.document,
         }) : '';
@@ -122,7 +122,7 @@
               ${field('Recebida em', formatDate(wo.received_at))}
             </div>
             <div class="flex flex-wrap gap-4 mt-4 text-xs text-gray-500">${dates}</div>
-            ${paymentUrl ? linkBox('Link de pagamento:', paymentUrl, 'bg-indigo-50 text-indigo-700') : ''}
+            ${qr ? `<div class="mt-4 p-3 rounded-lg bg-indigo-50 text-indigo-700"><p class="font-medium text-sm mb-2">Pagamento por QR Code</p>${qrCodeHtml(qr)}</div>` : ''}
             ${hasPendingDecision(quote) ? linkBox('Link público de aprovação para o cliente:', approvalUrl, 'bg-blue-50 text-blue-700') : ''}
           </div>
 

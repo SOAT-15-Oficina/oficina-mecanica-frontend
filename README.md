@@ -120,7 +120,11 @@ orçamento por query string — `?quote=<quoteId>&code=<OS>&document=<CPF>` — 
 detalhe da OS mostra esse link enquanto houver item pendente. Com `quote` a
 página lista os itens e permite aprovar ou reprovar; com `code` e `document`
 mostra o status e o histórico da OS. Quando o orçamento é aprovado, aparece o
-botão **Pagar agora** com o link do Mercado Pago.
+QR Code do Mercado Pago (Orders API, QR dinâmico): a imagem vem de
+`qr_code_url` + `.png`, o "copia e cola" de `qr_data` e o link abre a página
+pública do QR no Billing (`/api/billing/public/payments/{paymentId}/qr`). O
+detalhe da OS (`os.html`) mostra o mesmo bloco enquanto o pagamento estiver
+`PENDENTE`.
 
 ## Deploy ativo
 
@@ -190,7 +194,7 @@ Os testes cobrem as funções puras: escape de HTML/atributo, `parseJwt`,
 `formatCents`, `formatDate`, `statusBadge`, a consistência das tabelas de
 status e as regras da Fase 4 (`tests/fase4.test.js`): rótulos de ticket,
 orçamento, pagamento e Saga, quando itens são editáveis, quando entregar ou
-cancelar, link de pagamento pendente, link público de aprovação, validação de
+cancelar, QR Code do pagamento pendente (imagem, copia e cola e link), link público de aprovação, validação de
 filial e as ações e rotas da bancada. `app.js` e as páginas ficam fora da métrica de cobertura — exercitá-los
 exigiria E2E, que foi deixado fora de escopo.
 
